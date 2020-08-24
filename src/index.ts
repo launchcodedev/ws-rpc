@@ -86,6 +86,7 @@ export class Client<
         }
       };
 
+      // TODO: batch event listeners into one
       this.websocket.addEventListener('message', listener);
       this.websocket.send(JSON.stringify(req));
     });
@@ -132,6 +133,10 @@ export class Client<
       }
     });
   }
+
+  async close() {
+    this.websocket.close();
+  }
 }
 
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret>;
@@ -144,9 +149,11 @@ export class Server<
 > {
   websocket: WebSocket.Server;
   connections: WebSocket[] = [];
+
   handlers: {
     [T in MessageTypes]?: Fn<H[T]['request']['data'], H[T]['response']['data']>[];
   } = {};
+
   eventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
 
   constructor(port: number) {
