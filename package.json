@@ -38,6 +38,7 @@
     "@types/uuid": "3",
     "@types/ws": "7",
     "eslint": "7",
+    "get-port": "5",
     "husky": "3",
     "jest": "26",
     "prettier": "2",

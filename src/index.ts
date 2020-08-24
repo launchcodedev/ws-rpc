@@ -55,20 +55,20 @@ export class Client<
   constructor(host: string, port: number) {
     this.websocket = new WebSocket(`ws://${host}:${port}`);
 
-    this.websocket.addEventListener('error', err => {
+    this.websocket.addEventListener('error', (err) => {
       console.error(err);
     });
 
     this.connecting = new Promise((resolve, reject) => {
       this.websocket.addEventListener('open', () => resolve());
-      this.websocket.addEventListener('error', err => reject(err));
+      this.websocket.addEventListener('error', (err) => reject(err));
     });
   }
 
   async callRaw<T extends MessageTypes>(req: H[T]['request']): Promise<H[T]['response']> {
     await this.connecting;
 
-    const response = new Promise<H[T]['response']>(resolve => {
+    const response = new Promise<H[T]['response']>((resolve) => {
       const listener = ({ data }: { data: string }) => {
         if (typeof data === 'string') {
           const parsed = JSON.parse(data);
@@ -152,14 +152,14 @@ export class Server<
   constructor(port: number) {
     this.websocket = new WebSocket.Server({ port });
 
-    this.websocket.on('connection', async ws => {
+    this.websocket.on('connection', async (ws) => {
       this.connections.push(ws);
 
       ws.on('close', () => {
-        this.connections = this.connections.filter(c => c !== ws);
+        this.connections = this.connections.filter((c) => c !== ws);
       });
 
-      ws.on('message', async req => {
+      ws.on('message', async (req) => {
         if (typeof req === 'string') {
           const parsed = JSON.parse(req);
 
@@ -196,7 +196,7 @@ export class Server<
 
     for (const ws of this.connections) {
       await new Promise((resolve, reject) =>
-        ws.send(msg, err => {
+        ws.send(msg, (err) => {
           if (err) reject(err);
           else resolve();
         }),
@@ -207,5 +207,14 @@ export class Server<
   onEvent<T extends EventTypes>(e: T, handler: (event: E[T]) => Promise<void>) {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
+  }
+
+  async close() {
+    await new Promise((resolve, reject) =>
+      this.websocket.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      }),
+    );
   }
 }
