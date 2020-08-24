@@ -1,0 +1,67 @@
+{
+  "name": "@lcdev/ws-rpc",
+  "version": "0.0.0",
+  "description": "Simple type-safe websocket RPC layer",
+  "license": "MPL-2.0",
+  "sideEffects": false,
+  "author": {
+    "name": "Launchcode",
+    "email": "admin@lc.dev",
+    "url": "https://lc.dev"
+  },
+  "main": "dist/index.js",
+  "module": "dist/es/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "/dist",
+    "!*.tsbuildinfo",
+    "!*.test.*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "build:es": "tsc -b tsconfig.es.json",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint --ext .ts,.tsx src",
+    "fix": "eslint --ext .ts,.tsx src --fix",
+    "test": "jest",
+    "prepublishOnly": "yarn clean && yarn build && yarn build:es"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "8",
+    "@lcdev/commitlint": "1",
+    "@lcdev/eslint-config": "0.3",
+    "@lcdev/jest": "0.3",
+    "@lcdev/prettier": "0.1",
+    "@lcdev/ts": "0.2",
+    "@lcdev/tsconfig": "0.2",
+    "@types/jest": "26",
+    "@types/uuid": "3",
+    "@types/ws": "7",
+    "eslint": "7",
+    "husky": "3",
+    "jest": "26",
+    "prettier": "2",
+    "typescript": "3"
+  },
+  "prettier": "@lcdev/prettier",
+  "eslintConfig": {
+    "extends": "@lcdev"
+  },
+  "jest": {
+    "preset": "@lcdev/jest"
+  },
+  "husky": {
+    "hooks": {
+      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
+    }
+  },
+  "commitlint": {
+    "extends": [
+      "@lcdev/commitlint"
+    ]
+  },
+  "dependencies": {
+    "uuid": "3",
+    "ws": "7"
+  }
+}
