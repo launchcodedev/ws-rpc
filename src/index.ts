@@ -1,11 +1,15 @@
 import { Json } from '@lcdev/ts';
-import WebSocket from 'ws';
+import WS from 'ws';
 import uuid from 'uuid/v4';
 
 type MessageType = string;
 type EventType = string;
 
-type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret>;
+type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
+
+if (typeof WebSocket === 'undefined') {
+  global.WebSocket = WS as any;
+}
 
 /** Canonical type for requests and responses */
 export type MessageVariants<MessageTypes extends MessageType> = {
@@ -78,7 +82,7 @@ export class Client<
   eventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
   onceEventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
 
-  private constructor(host: string, port: number) {
+  constructor(host: string, port: number) {
     this.websocket = new WebSocket(`ws://${host}:${port}`);
 
     this.websocket.addEventListener('error', (err) => {
@@ -150,6 +154,8 @@ export class Client<
     req: H[T]['request'],
     timeoutMS = 15000,
   ): Promise<H[T]['response']> {
+    await this.connecting;
+
     const response = new Promise<H[T]['response']>((resolve, reject) => {
       this.waitingForResponse[req.mid] = (res) => res.then(resolve, reject);
       this.websocket.send(JSON.stringify(req));
@@ -183,16 +189,12 @@ export class Client<
   }
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
-    await new Promise((resolve, reject) =>
-      this.websocket.send(JSON.stringify(event), (err) => {
-        if (err) reject(err);
-        else resolve();
-      }),
-    );
+    await this.connecting;
+    this.websocket.send(JSON.stringify(event));
   }
 
-  async sendEvent<T extends EventTypes>(event: T, data: Omit<E[T], 'ev'>) {
-    return this.sendEventRaw(({ ev: event, ...data } as unknown) as E[T]);
+  async sendEvent<T extends EventTypes>(event: T, data: E[T]['data']) {
+    return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
   on<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
@@ -220,8 +222,8 @@ export class Server<
   H extends MessageVariants<MessageTypes>,
   E extends EventVariants<EventTypes>
 > {
-  websocket: WebSocket.Server;
-  connections: WebSocket[] = [];
+  websocket: WS.Server;
+  connections: WS[] = [];
 
   handlers: {
     [T in MessageTypes]?: Fn<H[T]['request']['data'], H[T]['response']['data']>;
@@ -231,7 +233,7 @@ export class Server<
   onceEventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
 
   constructor(port: number) {
-    this.websocket = new WebSocket.Server({ port });
+    this.websocket = new WS.Server({ port });
 
     this.websocket.on('connection', async (ws) => {
       this.connections.push(ws);
@@ -251,16 +253,14 @@ export class Server<
             const handler = this.handlers[mt as MessageTypes];
 
             if (handler) {
-              await handler(data).then(
-                (responseData) => {
-                  ws.send(JSON.stringify({ mt, mid, data: responseData }));
-                },
-                (err) => {
-                  ws.send(
-                    JSON.stringify({ err: true, mid, message: err.toString(), code: err.code }),
-                  );
-                },
-              );
+              try {
+                const responseData = await handler(data);
+                ws.send(JSON.stringify({ mt, mid, data: responseData }));
+              } catch (err) {
+                ws.send(
+                  JSON.stringify({ err: true, mid, message: err.toString(), code: err.code }),
+                );
+              }
             }
 
             return;
@@ -309,11 +309,11 @@ export class Server<
     }
   }
 
-  async sendEvent<T extends EventTypes>(event: T, data: Omit<E[T], 'ev'>) {
-    return this.sendEventRaw(({ ev: event, ...data } as unknown) as E[T]);
+  async sendEvent<T extends EventTypes>(event: T, data: E[T]['data']) {
+    return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
-  on<T extends EventTypes>(e: T, handler: (event: E[T]) => Promise<void>) {
+  on<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
   }

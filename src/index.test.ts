@@ -35,7 +35,10 @@ describe('server and client', () => {
       throw new Error('something went wrong');
     });
 
-    await expect(client.call('foo', {})).rejects.toHaveProperty('message', 'Error: something went wrong')
+    await expect(client.call('foo', {})).rejects.toHaveProperty(
+      'message',
+      'Error: something went wrong',
+    );
 
     await client.close();
     await server.close();
@@ -52,8 +55,8 @@ describe('server and client', () => {
       expect(event).toEqual({ ev: 'foo', data: 'bar' });
     });
 
-    await server.sendEvent('foo', { data: 'bar' });
-    await server.sendEvent('foo', { data: 'bar' });
+    await server.sendEvent('foo', 'bar');
+    await server.sendEvent('foo', 'bar');
 
     await new Promise((r) => setTimeout(r, 100));
 
@@ -73,8 +76,8 @@ describe('server and client', () => {
     });
 
     // trigger twice, but should only be seen once
-    await server.sendEvent('foo', { data: 'bar' });
-    await server.sendEvent('foo', { data: 'bar' });
+    await server.sendEvent('foo', 'bar');
+    await server.sendEvent('foo', 'bar');
 
     await new Promise((r) => setTimeout(r, 100));
 
@@ -92,11 +95,11 @@ describe('server and client', () => {
     const handler = async (ev: any) => expect(ev).toEqual({ ev: 'foo' });
     client.on('foo', handler);
 
-    await server.sendEvent('foo', { data: undefined });
+    await server.sendEvent('foo');
     await new Promise((r) => setTimeout(r, 100));
     client.removeEventListener('foo', handler);
 
-    await server.sendEvent('foo', { data: undefined });
+    await server.sendEvent('foo');
 
     await new Promise((r) => setTimeout(r, 100));
 
