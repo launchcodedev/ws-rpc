@@ -79,8 +79,8 @@ export class Client<
   waitingForResponse: {
     [mid: string]: ((res: Promise<H[MessageTypes]['response']>) => void) | undefined;
   } = {};
-  eventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
-  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
+  eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
   constructor(host: string, port: number) {
     this.websocket = new WebSocket(`ws://${host}:${port}`);
@@ -121,14 +121,16 @@ export class Client<
             const eventType = event.ev as EventTypes;
 
             // we reset onceEventHandlers right away, so that new messages don't hit them as well
-            const onceHandlers: Fn<E[EventTypes]>[] = this.onceEventHandlers[eventType] ?? [];
+            const onceHandlers = this.onceEventHandlers[eventType];
             this.onceEventHandlers[eventType] = [];
 
-            await Promise.all(onceHandlers.map((handler) => handler(event)));
+            if (onceHandlers) {
+              await Promise.all(onceHandlers.map((handler) => handler(event.data)));
+            }
 
             await Promise.all(
               this.eventHandlers[eventType]?.map((handler) => {
-                return handler(event);
+                return handler(event.data);
               }) ?? [],
             );
 
@@ -197,17 +199,17 @@ export class Client<
     return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
-  on<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
   }
 
-  once<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.onceEventHandlers[e] = this.onceEventHandlers[e] ?? [];
     this.onceEventHandlers[e]!.push(handler);
   }
 
-  removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e]?.filter((v) => v !== handler);
   }
 
@@ -229,8 +231,8 @@ export class Server<
     [T in MessageTypes]?: Fn<H[T]['request']['data'], H[T]['response']['data']>;
   } = {};
 
-  eventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
-  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]>[] } = {};
+  eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
   constructor(port: number) {
     this.websocket = new WS.Server({ port });
@@ -270,14 +272,17 @@ export class Server<
             const event: E[EventTypes] = parsed;
             const eventType: EventTypes = parsed.ev;
 
-            const onceHandlers: Fn<E[EventTypes]>[] = this.onceEventHandlers[eventType] ?? [];
+            // we reset onceEventHandlers right away, so that new messages don't hit them as well
+            const onceHandlers = this.onceEventHandlers[eventType];
             this.onceEventHandlers[eventType] = [];
 
-            await Promise.all(onceHandlers.map((handler) => handler(event)));
+            if (onceHandlers) {
+              await Promise.all(onceHandlers.map((handler) => handler(event.data)));
+            }
 
             await Promise.all(
               this.eventHandlers[eventType]?.map((handler) => {
-                return handler(event);
+                return handler(event.data);
               }) ?? [],
             );
 
@@ -313,17 +318,17 @@ export class Server<
     return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
-  on<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
   }
 
-  once<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.onceEventHandlers[e] = this.onceEventHandlers[e] ?? [];
     this.onceEventHandlers[e]!.push(handler);
   }
 
-  removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]>) {
+  removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e]?.filter((v) => v !== handler);
   }
 
