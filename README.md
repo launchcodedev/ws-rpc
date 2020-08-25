@@ -1,6 +1,10 @@
 ## Simple Websocket RPC
 This package provides the minimal set of boilerplate that's normally needed when setting up a client-server websocket.
 
+It's a really lightweight alternative to socket.io and similar systems. The big benefit is that it's fully type-safe,
+and you can read all of the source code in 10 minutes. Don't build giant systems on this - it's meant for small
+communication layers between software, usually in single-tenant systems.
+
 ```
 yarn add @lcdev/ws-rpc@VERSION
 ```
