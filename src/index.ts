@@ -8,7 +8,7 @@ type EventType = string;
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
 
 if (typeof WebSocket === 'undefined') {
-  global.WebSocket = WS as any;
+  ((global.WebSocket as any) as typeof WS) = WS;
 }
 
 /** Canonical type for requests and responses */
@@ -59,7 +59,7 @@ export type EventVariant<T extends EventType, Data extends Json | void> = {
 };
 
 class RPCError extends Error {
-  constructor(message: string, private code?: number) {
+  constructor(message: string, public readonly code?: number) {
     super(message);
   }
 
@@ -87,7 +87,7 @@ export class Client<
 
     this.websocket.addEventListener('error', (err) => {
       console.error(err);
-      this.close();
+      this.close().catch(() => {});
     });
 
     this.connecting = new Promise((resolve, reject) => {
@@ -97,9 +97,9 @@ export class Client<
       this.websocket.addEventListener('message', async ({ data }: { data: string }) => {
         if (typeof data === 'string') {
           if (data.length === 0) return;
-          const parsed = JSON.parse(data);
+          const parsed = JSON.parse(data) as H | E;
 
-          if (parsed.err) {
+          if ('err' in parsed) {
             const { message, code, mid }: H[MessageTypes]['error'] = parsed;
 
             this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
@@ -108,7 +108,7 @@ export class Client<
             return;
           }
 
-          if (parsed.mt) {
+          if ('mt' in parsed) {
             const response: H[MessageTypes]['response'] = parsed;
             this.waitingForResponse[response.mid]?.(Promise.resolve(response));
             delete this.waitingForResponse[response.mid];
@@ -116,7 +116,7 @@ export class Client<
             return;
           }
 
-          if (parsed.ev) {
+          if ('ev' in parsed) {
             const event: E[EventTypes] = parsed;
             const eventType = event.ev as EventTypes;
 
@@ -133,8 +133,6 @@ export class Client<
                 return handler(event.data);
               }) ?? [],
             );
-
-            return;
           }
         }
       });
@@ -165,7 +163,7 @@ export class Client<
 
     return Promise.race([
       response,
-      new Promise<any>((_, reject) =>
+      new Promise<H[T]['response']>((_, reject) =>
         setTimeout(() => {
           delete this.waitingForResponse[req.mid];
           reject(new RPCError(`Call to ${req.mt} failed because it timed out in ${timeoutMS}ms`));
@@ -247,9 +245,9 @@ export class Server<
       ws.on('message', async (data) => {
         if (typeof data === 'string') {
           if (data.length === 0) return;
-          const parsed = JSON.parse(data);
+          const parsed = JSON.parse(data) as H | E;
 
-          if (parsed.mt) {
+          if ('mt' in parsed) {
             const { mt, mid, data }: H[MessageTypes]['request'] = parsed;
 
             const handler = this.handlers[mt as MessageTypes];
@@ -259,18 +257,24 @@ export class Server<
                 const responseData = await handler(data);
                 ws.send(JSON.stringify({ mt, mid, data: responseData }));
               } catch (err) {
-                ws.send(
-                  JSON.stringify({ err: true, mid, message: err.toString(), code: err.code }),
-                );
+                if (err instanceof RPCError) {
+                  ws.send(
+                    JSON.stringify({ err: true, mid, message: err.toString(), code: err.code }),
+                  );
+                } else if (typeof err === 'object') {
+                  ws.send(JSON.stringify({ err: true, mid, message: err.toString() })); // eslint-disable-line
+                } else {
+                  ws.send(JSON.stringify({ err: true, mid, message: 'An unkown error occured' }));
+                }
               }
             }
 
             return;
           }
 
-          if (parsed.ev) {
+          if ('ev' in parsed) {
             const event: E[EventTypes] = parsed;
-            const eventType: EventTypes = parsed.ev;
+            const eventType = event.ev as EventTypes;
 
             // we reset onceEventHandlers right away, so that new messages don't hit them as well
             const onceHandlers = this.onceEventHandlers[eventType];
@@ -285,8 +289,6 @@ export class Server<
                 return handler(event.data);
               }) ?? [],
             );
-
-            return;
           }
         }
       });
