@@ -91,3 +91,14 @@ import { Client, Server } from '@lcdev/ws-rpc/bson';
 This will give you the ability to encode any JS object (Date, Buffer, etc.) without any extra work on your part.
 Note that the types are a little less contrained because of this, and in particular, you might run into difficulty
 between nodejs and browser with `Buffer` vs `Blob` vs `ArrayBuffer`. Test out code in the different environments to be sure.
+
+### Reconnecting / Fault Tolerance
+This package will accept any WebSocket implementation for clients.
+
+```typescript
+import ReconnectingWS from 'reconnecting-websocket';
+
+const client = new Client(new ReconnectingWS('ws://localhost:8989'));
+```
+
+Ensure that the WS is spec compliant.
