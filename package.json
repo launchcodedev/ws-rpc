@@ -14,6 +14,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "/dist",
+    "/bson.js",
+    "/bson.d.ts",
     "!*.tsbuildinfo",
     "!*.test.*"
   ],
