@@ -80,7 +80,7 @@ Both sides can send, or receive events.
 
 ### Binary Messages
 This package has built-in support for using [BSON](https://www.npmjs.com/package/bson).
-This is optional. You don't pay for it, if you don't use it.
+This is optional. You don't pay for it, if you don't use it (`bson` adds roughly 20kb to your web bundle).
 
 Just replace `Client` and `Server` with imports:
 
