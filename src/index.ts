@@ -1,4 +1,5 @@
 import WS from 'ws';
+import type ReconnectingWS from 'reconnecting-websocket';
 import { Json } from '@lcdev/ts';
 import { nanoid } from 'nanoid';
 
@@ -84,12 +85,20 @@ export class Client<
   eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
   onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
-  constructor(host: string, port: number) {
-    this.websocket = new WebSocket(`ws://${host}:${port}`);
+  constructor(websocket: WebSocket);
+  constructor(websocket: ReconnectingWS);
+  constructor(host: string, port: number);
+
+  constructor(hostOrWebsocket: string | WebSocket | ReconnectingWS, port?: number) {
+    if (typeof hostOrWebsocket === 'string' && port !== undefined) {
+      const host = hostOrWebsocket;
+      this.websocket = new WebSocket(`ws://${host}:${port}`);
+    } else {
+      this.websocket = hostOrWebsocket as WebSocket;
+    }
 
     this.websocket.addEventListener('error', (err) => {
       console.error(err);
-      this.close().catch(() => {});
     });
 
     this.connecting = new Promise((resolve, reject) => {
@@ -134,10 +143,8 @@ export class Client<
         }
       };
 
-      this.websocket.addEventListener('message', async ({ data }: { data: Deserializable }) => {
-        const parsed = await this.deserialize<H | E>(data);
-
-        await handleParsedMessage(parsed);
+      this.websocket.addEventListener('message', ({ data }: { data: Deserializable }) => {
+        this.deserialize<H | E>(data).then(handleParsedMessage).catch(console.error);
       });
     });
   }

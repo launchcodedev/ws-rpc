@@ -68,6 +68,7 @@
     "@types/ws": "7",
     "bson": "4",
     "nanoid": "3",
+    "reconnecting-websocket": "4",
     "ws": "7"
   }
 }

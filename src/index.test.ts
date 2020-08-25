@@ -1,4 +1,5 @@
 import getPort from 'get-port';
+import ReconnectingWS from 'reconnecting-websocket';
 import { Server, Client } from './index';
 
 describe('server', () => {
@@ -105,5 +106,29 @@ describe('server and client', () => {
 
     await client.close();
     await server.close();
+  });
+});
+
+describe('reconnecting websocket', () => {
+  test('disconnection', async () => {
+    const port = await getPort();
+    const server = new Server(port);
+    const client = await new Client(
+      new ReconnectingWS(`ws://localhost:${port}`, [], { connectionTimeout: 10 }),
+    ).waitForConnection();
+
+    // the server closed before trying to ping
+    await server.close();
+
+    await expect(client.call('ping', {}, 10)).rejects.toBeTruthy();
+
+    // now there's a new server in its place
+    const newServer = new Server(port);
+    newServer.registerHandler('ping', () => 'pong');
+
+    await expect(client.call('ping', {})).resolves.toEqual('pong');
+
+    await client.close();
+    await newServer.close();
   });
 });
