@@ -62,6 +62,7 @@
     ]
   },
   "dependencies": {
+    "@types/ws": "7",
     "uuid": "3",
     "ws": "7"
   }
