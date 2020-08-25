@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid';
 export type MessageType = string;
 export type EventType = string;
 export type Serializable = Json | object | void;
-export type Deserializable = string | Buffer | ArrayBuffer;
+export type Deserializable = string | Buffer | ArrayBuffer | Blob;
 
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
 
@@ -135,18 +135,18 @@ export class Client<
       };
 
       this.websocket.addEventListener('message', async ({ data }: { data: Deserializable }) => {
-        const parsed = this.deserialize<H | E>(data);
+        const parsed = await this.deserialize<H | E>(data);
 
         await handleParsedMessage(parsed);
       });
     });
   }
 
-  protected serialize(data: Serializable): Deserializable {
+  protected async serialize(data: Serializable): Promise<Deserializable> {
     return JSON.stringify(data);
   }
 
-  protected deserialize<Out extends Serializable>(data: Deserializable): Out {
+  protected async deserialize<Out extends Serializable>(data: Deserializable): Promise<Out> {
     if (typeof data !== 'string') {
       throw new RPCError(
         'Tried to deserialize a non-string message! Use BJSONClient if you intend to send binary messages.',
@@ -169,7 +169,7 @@ export class Client<
 
     const response = new Promise<H[T]['response']>((resolve, reject) => {
       this.waitingForResponse[req.mid] = (res) => res.then(resolve, reject);
-      this.websocket.send(this.serialize(req));
+      this.serialize(req).then((msg) => this.websocket.send(msg));
     });
 
     return Promise.race([
@@ -201,7 +201,7 @@ export class Client<
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
     await this.connecting;
-    this.websocket.send(this.serialize(event));
+    this.websocket.send(await this.serialize(event));
   }
 
   async sendEvent<T extends EventTypes>(event: T, data: E[T]['data']) {
@@ -263,16 +263,18 @@ export class Server<
             try {
               const responseData = await handler(data);
 
-              ws.send(this.serialize({ mt, mid, data: responseData }));
+              ws.send(await this.serialize({ mt, mid, data: responseData }));
             } catch (err) {
               if (err instanceof RPCError) {
                 ws.send(
-                  this.serialize({ err: true, mid, message: err.toString(), code: err.code }),
+                  await this.serialize({ err: true, mid, message: err.toString(), code: err.code }),
                 );
               } else if (typeof err === 'object') {
-                ws.send(this.serialize({ err: true, mid, message: err.toString() })); // eslint-disable-line
+                ws.send(await this.serialize({ err: true, mid, message: err.toString() })); // eslint-disable-line
               } else {
-                ws.send(this.serialize({ err: true, mid, message: 'An unkown error occured' }));
+                ws.send(
+                  await this.serialize({ err: true, mid, message: 'An unkown error occured' }),
+                );
               }
             }
           }
@@ -301,18 +303,18 @@ export class Server<
       };
 
       ws.on('message', async (data: Deserializable) => {
-        const parsed = this.deserialize<H | E>(data);
+        const parsed = await this.deserialize<H | E>(data);
 
         await handleParsedMessage(parsed);
       });
     });
   }
 
-  protected serialize(data: Serializable): Deserializable {
+  protected async serialize(data: Serializable): Promise<Deserializable> {
     return JSON.stringify(data);
   }
 
-  protected deserialize<Out extends Serializable>(data: Deserializable): Out {
+  protected async deserialize<Out extends Serializable>(data: Deserializable): Promise<Out> {
     if (typeof data !== 'string') {
       throw new RPCError(
         'Tried to deserialize a non-string message! Use BJSONClient if you intend to send binary messages.',
@@ -331,7 +333,7 @@ export class Server<
   }
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
-    const msg = this.serialize(event);
+    const msg = await this.serialize(event);
 
     for (const ws of this.connections) {
       await new Promise((resolve, reject) =>

@@ -14,23 +14,44 @@ import {
   EventVariants,
 } from './index';
 
+export {
+  Serializable,
+  Deserializable,
+  MessageType,
+  EventType,
+  MessageVariant,
+  EventVariant,
+  MessageVariants,
+  EventVariants,
+} from './index';
+
 function serialize(data: Serializable): Deserializable {
   return serializeBSON(data);
 }
 
-function deserialize<Out extends Serializable>(
+async function deserialize<Out extends Serializable>(
   data: Deserializable,
   deserializeOptions: DeserializeOptions,
-): Out {
+): Promise<Out> {
   if (typeof data === 'string') {
     // we won't complain, just assume someone sent JSON
     return JSON.parse(data) as Out;
   }
 
-  return deserializeBSON(data as Buffer, { promoteBuffers: true, ...deserializeOptions }) as Out;
+  let buffer: Buffer | Uint8Array;
+
+  if ('arrayBuffer' in data) {
+    buffer = new Uint8Array(await data.arrayBuffer());
+  } else if (data instanceof ArrayBuffer) {
+    buffer = new Uint8Array(data);
+  } else {
+    buffer = data;
+  }
+
+  return deserializeBSON(buffer as Buffer, { promoteBuffers: true, ...deserializeOptions }) as Out;
 }
 
-export class BSONClient<
+export class Client<
   MessageTypes extends MessageType,
   EventTypes extends EventType,
   H extends MessageVariants<MessageTypes>,
@@ -42,16 +63,16 @@ export class BSONClient<
     this.deserializeOptions = options;
   }
 
-  serialize(data: Serializable): Deserializable {
+  async serialize(data: Serializable): Promise<Deserializable> {
     return serialize(data);
   }
 
-  deserialize<Out extends Serializable>(data: Deserializable): Out {
+  async deserialize<Out extends Serializable>(data: Deserializable): Promise<Out> {
     return deserialize<Out>(data, this.deserializeOptions);
   }
 }
 
-export class BSONServer<
+export class Server<
   MessageTypes extends MessageType,
   EventTypes extends EventType,
   H extends MessageVariants<MessageTypes>,
@@ -63,11 +84,11 @@ export class BSONServer<
     this.deserializeOptions = options;
   }
 
-  serialize(data: Serializable): Deserializable {
+  async serialize(data: Serializable): Promise<Deserializable> {
     return serialize(data);
   }
 
-  deserialize<Out extends Serializable>(data: Deserializable): Out {
+  async deserialize<Out extends Serializable>(data: Deserializable): Promise<Out> {
     return deserialize<Out>(data, this.deserializeOptions);
   }
 }

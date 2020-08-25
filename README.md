@@ -77,3 +77,13 @@ await client.sendEvent(EventType.SomethingInterestingHappened, { attachedData: '
 ```
 
 Both sides can send, or receive events.
+
+### Binary Messages
+This package has built-in support for using [BSON](https://www.npmjs.com/package/bson).
+This is optional. You don't pay for it, if you don't use it.
+
+Just replace `Client` and `Server` with imports:
+
+```typescript
+import { Client, Server } from '@lcdev/ws-rpc/bson';
+```

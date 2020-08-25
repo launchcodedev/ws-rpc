@@ -1,11 +1,11 @@
 import getPort from 'get-port';
-import { BSONClient, BSONServer } from './bson';
+import { Client, Server } from './bson';
 
 describe('server and client', () => {
   it('serializes dates', async () => {
     const port = await getPort();
-    const server = new BSONServer(port);
-    const client = new BSONClient('localhost', port);
+    const server = new Server(port);
+    const client = new Client('localhost', port);
 
     const now = new Date();
 
@@ -21,8 +21,8 @@ describe('server and client', () => {
 
   it('uses bson for events', async () => {
     const port = await getPort();
-    const server = new BSONServer(port);
-    const client = new BSONClient('localhost', port);
+    const server = new Server(port);
+    const client = new Client('localhost', port);
 
     expect.assertions(2);
 
