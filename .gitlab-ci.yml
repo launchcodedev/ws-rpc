@@ -1,0 +1,37 @@
+include:
+  - project: 'meat-n-potatoes/ci'
+    file: 'all.yml'
+    ref: v2
+
+stages:
+  - lint
+  - build
+  - test
+  - publish
+
+lint:
+  extends: .node-lint
+  stage: lint
+
+build:
+  extends: .node-build
+  stage: build
+
+test:
+  extends: .node-test
+  stage: test
+
+publish:
+  extends: .node-publish-tag
+  stage: publish
+
+publish-public:
+  extends: .node-publish-tag-public
+  stage: publish
+
+sync-github-repo:
+  extends: .sync-github-repo
+  stage: publish
+  only: [master]
+  variables:
+    GITHUB_SSH_URL: git@github.com:launchcodedev/ws-rpc.git
