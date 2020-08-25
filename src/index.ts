@@ -169,7 +169,7 @@ export class Client<
 
     const response = new Promise<H[T]['response']>((resolve, reject) => {
       this.waitingForResponse[req.mid] = (res) => res.then(resolve, reject);
-      this.serialize(req).then((msg) => this.websocket.send(msg));
+      this.serialize(req).then((msg) => this.websocket.send(msg), reject);
     });
 
     return Promise.race([
