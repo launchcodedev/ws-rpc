@@ -1,9 +1,11 @@
-import { Json } from '@lcdev/ts';
 import WS from 'ws';
-import uuid from 'uuid/v4';
+import { Json } from '@lcdev/ts';
+import { nanoid } from 'nanoid';
 
-type MessageType = string;
-type EventType = string;
+export type MessageType = string;
+export type EventType = string;
+export type Serializable = Json | object | void;
+export type Deserializable = string | Buffer | ArrayBuffer;
 
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
 
@@ -13,23 +15,23 @@ if (typeof WebSocket === 'undefined') {
 
 /** Canonical type for requests and responses */
 export type MessageVariants<MessageTypes extends MessageType> = {
-  [T in MessageTypes]: MessageVariant<T, Json | void, Json | void>;
+  [T in MessageTypes]: MessageVariant<T, Serializable, Serializable>;
 };
 
 /** Canonical type for all events that can occur */
 export type EventVariants<EventTypes extends EventType> = {
-  [T in EventTypes]: EventVariant<T, Json | void>;
+  [T in EventTypes]: EventVariant<T, Serializable>;
 };
 
 export type MessageVariant<
   T extends MessageType,
-  Data extends Json | void,
-  ResponseData extends Json | void
+  Data extends Serializable,
+  ResponseData extends Serializable
 > = {
   request: {
     /** The MessageType, which describes what to expect from the message */
     mt: T;
-    /** A unique UUID, to identify messages (to correspond request & response) */
+    /** A unique ID, to identify messages (to correspond request & response) */
     mid: string;
     /** What data comes with the message */
     data: Data;
@@ -37,14 +39,14 @@ export type MessageVariant<
   response: {
     /** The MessageType, which describes what to expect from the message */
     mt: T;
-    /** A unique UUID, to identify messages (to correspond request & response) */
+    /** A unique ID, to identify messages (to correspond request & response) */
     mid: string;
     /** What data comes back from the message */
     data: ResponseData;
   };
   error: {
     err: true;
-    /** A unique UUID, to identify messages (to correspond request & response) */
+    /** A unique ID, to identify messages (to correspond request & response) */
     mid: string;
     /** Error description */
     message: string;
@@ -53,7 +55,7 @@ export type MessageVariant<
   };
 };
 
-export type EventVariant<T extends EventType, Data extends Json | void> = {
+export type EventVariant<T extends EventType, Data extends Serializable> = {
   ev: T;
   data: Data;
 };
@@ -94,71 +96,80 @@ export class Client<
       this.websocket.addEventListener('open', () => resolve());
       this.websocket.addEventListener('error', (err) => reject(err));
 
-      this.websocket.addEventListener('message', async ({ data }: { data: string }) => {
-        if (typeof data === 'string') {
-          if (data.length === 0) return;
-          const parsed = JSON.parse(data) as H | E;
+      const handleParsedMessage = async (parsed: H | E) => {
+        if ('err' in parsed) {
+          const { message, code, mid }: H[MessageTypes]['error'] = parsed;
 
-          if ('err' in parsed) {
-            const { message, code, mid }: H[MessageTypes]['error'] = parsed;
+          this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
+          delete this.waitingForResponse[mid];
 
-            this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
-            delete this.waitingForResponse[mid];
-
-            return;
-          }
-
-          if ('mt' in parsed) {
-            const response: H[MessageTypes]['response'] = parsed;
-            this.waitingForResponse[response.mid]?.(Promise.resolve(response));
-            delete this.waitingForResponse[response.mid];
-
-            return;
-          }
-
-          if ('ev' in parsed) {
-            const event: E[EventTypes] = parsed;
-            const eventType = event.ev as EventTypes;
-
-            // we reset onceEventHandlers right away, so that new messages don't hit them as well
-            const onceHandlers = this.onceEventHandlers[eventType];
-            this.onceEventHandlers[eventType] = [];
-
-            if (onceHandlers) {
-              await Promise.all(onceHandlers.map((handler) => handler(event.data)));
-            }
-
-            await Promise.all(
-              this.eventHandlers[eventType]?.map((handler) => {
-                return handler(event.data);
-              }) ?? [],
-            );
-          }
+          return;
         }
+
+        if ('mt' in parsed) {
+          const response: H[MessageTypes]['response'] = parsed;
+          this.waitingForResponse[response.mid]?.(Promise.resolve(response));
+          delete this.waitingForResponse[response.mid];
+
+          return;
+        }
+
+        if ('ev' in parsed) {
+          const event: E[EventTypes] = parsed;
+          const eventType = event.ev as EventTypes;
+
+          // we reset onceEventHandlers right away, so that new messages don't hit them as well
+          const onceHandlers = this.onceEventHandlers[eventType];
+          this.onceEventHandlers[eventType] = [];
+
+          if (onceHandlers) {
+            await Promise.all(onceHandlers.map((handler) => handler(event.data)));
+          }
+
+          await Promise.all(
+            this.eventHandlers[eventType]?.map((handler) => {
+              return handler(event.data);
+            }) ?? [],
+          );
+        }
+      };
+
+      this.websocket.addEventListener('message', async ({ data }: { data: Deserializable }) => {
+        const parsed = this.deserialize<H | E>(data);
+
+        await handleParsedMessage(parsed);
       });
     });
   }
 
-  static async connect<
-    MessageTypes extends MessageType,
-    EventTypes extends EventType,
-    H extends MessageVariants<MessageTypes>,
-    E extends EventVariants<EventTypes>
-  >(host: string, port: number) {
-    const client = new Client<MessageTypes, EventTypes, H, E>(host, port);
-    await client.connecting;
-    return client;
+  protected serialize(data: Serializable): Deserializable {
+    return JSON.stringify(data);
+  }
+
+  protected deserialize<Out extends Serializable>(data: Deserializable): Out {
+    if (typeof data !== 'string') {
+      throw new RPCError(
+        'Tried to deserialize a non-string message! Use BJSONClient if you intend to send binary messages.',
+      );
+    }
+
+    return JSON.parse(data) as Out;
+  }
+
+  async waitForConnection() {
+    await this.connecting;
+    return this;
   }
 
   async callRaw<T extends MessageTypes>(
     req: H[T]['request'],
-    timeoutMS = 15000,
+    timeoutMS: number = 15000,
   ): Promise<H[T]['response']> {
     await this.connecting;
 
     const response = new Promise<H[T]['response']>((resolve, reject) => {
       this.waitingForResponse[req.mid] = (res) => res.then(resolve, reject);
-      this.websocket.send(JSON.stringify(req));
+      this.websocket.send(this.serialize(req));
     });
 
     return Promise.race([
@@ -175,11 +186,11 @@ export class Client<
   async call<T extends MessageTypes>(
     name: T,
     req: H[T]['request']['data'],
-    timeoutMS?: number,
+    timeoutMS: number = 15000,
   ): Promise<H[T]['response']['data']> {
     const fullRequest = {
       mt: name,
-      mid: uuid(),
+      mid: nanoid(),
       data: req,
     } as H[T]['request'];
 
@@ -190,7 +201,7 @@ export class Client<
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
     await this.connecting;
-    this.websocket.send(JSON.stringify(event));
+    this.websocket.send(this.serialize(event));
   }
 
   async sendEvent<T extends EventTypes>(event: T, data: E[T]['data']) {
@@ -242,57 +253,73 @@ export class Server<
         this.connections = this.connections.filter((c) => c !== ws);
       });
 
-      ws.on('message', async (data) => {
-        if (typeof data === 'string') {
-          if (data.length === 0) return;
-          const parsed = JSON.parse(data) as H | E;
+      const handleParsedMessage = async (parsed: H | E) => {
+        if ('mt' in parsed) {
+          const { mt, mid, data }: H[MessageTypes]['request'] = parsed;
 
-          if ('mt' in parsed) {
-            const { mt, mid, data }: H[MessageTypes]['request'] = parsed;
+          const handler = this.handlers[mt as MessageTypes];
 
-            const handler = this.handlers[mt as MessageTypes];
+          if (handler) {
+            try {
+              const responseData = await handler(data);
 
-            if (handler) {
-              try {
-                const responseData = await handler(data);
-                ws.send(JSON.stringify({ mt, mid, data: responseData }));
-              } catch (err) {
-                if (err instanceof RPCError) {
-                  ws.send(
-                    JSON.stringify({ err: true, mid, message: err.toString(), code: err.code }),
-                  );
-                } else if (typeof err === 'object') {
-                  ws.send(JSON.stringify({ err: true, mid, message: err.toString() })); // eslint-disable-line
-                } else {
-                  ws.send(JSON.stringify({ err: true, mid, message: 'An unkown error occured' }));
-                }
+              ws.send(this.serialize({ mt, mid, data: responseData }));
+            } catch (err) {
+              if (err instanceof RPCError) {
+                ws.send(
+                  this.serialize({ err: true, mid, message: err.toString(), code: err.code }),
+                );
+              } else if (typeof err === 'object') {
+                ws.send(this.serialize({ err: true, mid, message: err.toString() })); // eslint-disable-line
+              } else {
+                ws.send(this.serialize({ err: true, mid, message: 'An unkown error occured' }));
               }
             }
-
-            return;
           }
 
-          if ('ev' in parsed) {
-            const event: E[EventTypes] = parsed;
-            const eventType = event.ev as EventTypes;
-
-            // we reset onceEventHandlers right away, so that new messages don't hit them as well
-            const onceHandlers = this.onceEventHandlers[eventType];
-            this.onceEventHandlers[eventType] = [];
-
-            if (onceHandlers) {
-              await Promise.all(onceHandlers.map((handler) => handler(event.data)));
-            }
-
-            await Promise.all(
-              this.eventHandlers[eventType]?.map((handler) => {
-                return handler(event.data);
-              }) ?? [],
-            );
-          }
+          return;
         }
+
+        if ('ev' in parsed) {
+          const { ev, data }: E[EventTypes] = parsed;
+          const eventType = ev as EventTypes;
+
+          // we reset onceEventHandlers right away, so that new messages don't hit them as well
+          const onceHandlers = this.onceEventHandlers[eventType];
+          this.onceEventHandlers[eventType] = [];
+
+          if (onceHandlers) {
+            await Promise.all(onceHandlers.map((handler) => handler(data)));
+          }
+
+          await Promise.all(
+            this.eventHandlers[eventType]?.map((handler) => {
+              return handler(data);
+            }) ?? [],
+          );
+        }
+      };
+
+      ws.on('message', async (data: Deserializable) => {
+        const parsed = this.deserialize<H | E>(data);
+
+        await handleParsedMessage(parsed);
       });
     });
+  }
+
+  protected serialize(data: Serializable): Deserializable {
+    return JSON.stringify(data);
+  }
+
+  protected deserialize<Out extends Serializable>(data: Deserializable): Out {
+    if (typeof data !== 'string') {
+      throw new RPCError(
+        'Tried to deserialize a non-string message! Use BJSONClient if you intend to send binary messages.',
+      );
+    }
+
+    return JSON.parse(data) as Out;
   }
 
   registerHandler<T extends MessageTypes>(
@@ -304,7 +331,7 @@ export class Server<
   }
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
-    const msg = JSON.stringify(event);
+    const msg = this.serialize(event);
 
     for (const ws of this.connections) {
       await new Promise((resolve, reject) =>

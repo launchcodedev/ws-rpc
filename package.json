@@ -34,8 +34,8 @@
     "@lcdev/prettier": "0.1",
     "@lcdev/ts": "0.2",
     "@lcdev/tsconfig": "0.2",
+    "@types/bson": "4",
     "@types/jest": "26",
-    "@types/uuid": "3",
     "@types/ws": "7",
     "eslint": "7",
     "get-port": "5",
@@ -62,8 +62,10 @@
     ]
   },
   "dependencies": {
+    "@types/bson": "4",
     "@types/ws": "7",
-    "uuid": "3",
+    "bson": "4",
+    "nanoid": "3",
     "ws": "7"
   }
 }

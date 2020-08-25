@@ -13,7 +13,7 @@ describe('server and client', () => {
   test('basic message', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await Client.connect('localhost', port);
+    const client = new Client('localhost', port);
 
     server.registerHandler('foo', async () => {
       return { response: true };
@@ -29,7 +29,7 @@ describe('server and client', () => {
   test('error in handler', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await Client.connect('localhost', port);
+    const client = new Client('localhost', port);
 
     server.registerHandler('foo', async () => {
       throw new Error('something went wrong');
@@ -47,7 +47,7 @@ describe('server and client', () => {
   test('on event', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await Client.connect('localhost', port);
+    const client = await new Client('localhost', port).waitForConnection();
 
     expect.assertions(2);
 
@@ -67,7 +67,7 @@ describe('server and client', () => {
   test('once event', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await Client.connect('localhost', port);
+    const client = await new Client('localhost', port).waitForConnection();
 
     expect.assertions(1);
 
@@ -88,7 +88,7 @@ describe('server and client', () => {
   test('remove listener', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await Client.connect('localhost', port);
+    const client = await new Client('localhost', port).waitForConnection();
 
     expect.assertions(1);
 
