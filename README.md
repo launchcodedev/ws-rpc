@@ -87,3 +87,7 @@ Just replace `Client` and `Server` with imports:
 ```typescript
 import { Client, Server } from '@lcdev/ws-rpc/bson';
 ```
+
+This will give you the ability to encode any JS object (Date, Buffer, etc.) without any extra work on your part.
+Note that the types are a little less contrained because of this, and in particular, you might run into difficulty
+between nodejs and browser with `Buffer` vs `Blob` vs `ArrayBuffer`. Test out code in the different environments to be sure.
