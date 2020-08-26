@@ -97,6 +97,10 @@ export class Client<
       this.websocket = hostOrWebsocket as WebSocket;
     }
 
+    if ('binaryType' in this.websocket) {
+      this.websocket.binaryType = 'arraybuffer';
+    }
+
     this.websocket.addEventListener('error', (err) => {
       console.error(err);
     });
