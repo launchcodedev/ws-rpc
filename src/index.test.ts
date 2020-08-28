@@ -107,6 +107,19 @@ describe('server and client', () => {
     await client.close();
     await server.close();
   });
+
+  test('unimplemented function', async () => {
+    const port = await getPort();
+    const server = new Server(port);
+    const client = await new Client('localhost', port).waitForConnection();
+
+    await expect(client.call('foo', undefined)).rejects.toThrow(
+      "Function 'foo' had no handlers in the server",
+    );
+
+    await client.close();
+    await server.close();
+  });
 });
 
 describe('reconnecting websocket', () => {

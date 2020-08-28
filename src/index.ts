@@ -288,6 +288,14 @@ export class Server<
                 );
               }
             }
+          } else {
+            ws.send(
+              await this.serialize({
+                err: true,
+                mid,
+                message: `Function '${mt}' had no handlers in the server`,
+              }),
+            );
           }
 
           return;
