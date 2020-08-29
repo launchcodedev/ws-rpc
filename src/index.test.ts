@@ -108,6 +108,27 @@ describe('server and client', () => {
     await server.close();
   });
 
+  test('remove listener callback', async () => {
+    const port = await getPort();
+    const server = new Server(port);
+    const client = await new Client('localhost', port).waitForConnection();
+
+    expect.assertions(1);
+
+    const removeHandler = client.on('foo', async () => expect(true).toBe(true));
+
+    await server.sendEvent('foo');
+    await new Promise((r) => setTimeout(r, 100));
+    removeHandler();
+
+    await server.sendEvent('foo');
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    await client.close();
+    await server.close();
+  });
+
   test('unimplemented function', async () => {
     const port = await getPort();
     const server = new Server(port);

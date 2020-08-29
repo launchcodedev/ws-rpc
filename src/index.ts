@@ -7,6 +7,7 @@ export type MessageType = string;
 export type EventType = string;
 export type Serializable = Json | object | void;
 export type Deserializable = string | Buffer | ArrayBuffer | Blob;
+export type CancelEventListener = () => void;
 
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
 
@@ -219,14 +220,20 @@ export class Client<
     return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
-  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
+  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
+    return () => this.removeEventListener(e, handler);
   }
 
-  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
+  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
     this.onceEventHandlers[e] = this.onceEventHandlers[e] ?? [];
     this.onceEventHandlers[e]!.push(handler);
+    return () => this.removeEventListener(e, handler);
+  }
+
+  addEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
+    return this.on(e, handler);
   }
 
   removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
@@ -368,14 +375,20 @@ export class Server<
     return this.sendEventRaw(({ ev: event, data } as unknown) as E[T]);
   }
 
-  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
+  on<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
     this.eventHandlers[e] = this.eventHandlers[e] ?? [];
     this.eventHandlers[e]!.push(handler);
+    return () => this.removeEventListener(e, handler);
   }
 
-  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
+  once<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
     this.onceEventHandlers[e] = this.onceEventHandlers[e] ?? [];
     this.onceEventHandlers[e]!.push(handler);
+    return () => this.removeEventListener(e, handler);
+  }
+
+  addEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>): CancelEventListener {
+    return this.on(e, handler);
   }
 
   removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
