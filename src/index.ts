@@ -11,10 +11,6 @@ export type CancelEventListener = () => void;
 
 type Fn<Arg, Ret = void> = (arg: Arg) => Promise<Ret> | Ret;
 
-if (typeof WebSocket === 'undefined') {
-  ((global.WebSocket as any) as typeof WS) = WS;
-}
-
 /** Canonical type for requests and responses */
 export type MessageVariants<MessageTypes extends MessageType> = {
   [T in MessageTypes]: MessageVariant<T, Serializable, Serializable>;
@@ -78,13 +74,15 @@ export class Client<
   H extends MessageVariants<MessageTypes>,
   E extends EventVariants<EventTypes>
 > {
-  websocket: WebSocket;
-  connecting: Promise<void>;
-  waitingForResponse: {
+  private readonly websocket: WebSocket;
+  private readonly connecting: Promise<void>;
+
+  private waitingForResponse: {
     [mid: string]: ((res: Promise<H[MessageTypes]['response']>) => void) | undefined;
   } = {};
-  eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
-  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+
+  private eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+  private onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
   constructor(websocket: WebSocket);
   constructor(websocket: ReconnectingWS);
@@ -93,7 +91,11 @@ export class Client<
   constructor(hostOrWebsocket: string | WebSocket | ReconnectingWS, port?: number) {
     if (typeof hostOrWebsocket === 'string' && port !== undefined) {
       const host = hostOrWebsocket;
-      this.websocket = new WebSocket(`ws://${host}:${port}`);
+      if (typeof WebSocket === 'undefined') {
+        this.websocket = (new WS(`ws://${host}:${port}`) as unknown) as WebSocket;
+      } else {
+        this.websocket = new WebSocket(`ws://${host}:${port}`);
+      }
     } else {
       this.websocket = hostOrWebsocket as WebSocket;
     }
@@ -251,15 +253,15 @@ export class Server<
   H extends MessageVariants<MessageTypes>,
   E extends EventVariants<EventTypes>
 > {
-  websocket: WS.Server;
-  connections: WS[] = [];
+  private readonly websocket: WS.Server;
+  private connections: WS[] = [];
 
-  handlers: {
+  private handlers: {
     [T in MessageTypes]?: Fn<H[T]['request']['data'], H[T]['response']['data']>;
   } = {};
 
-  eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
-  onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+  private eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
+  private onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
   constructor(port: number) {
     this.websocket = new WS.Server({ port });
