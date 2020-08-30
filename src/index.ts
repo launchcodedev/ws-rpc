@@ -1,6 +1,6 @@
 import WS from 'ws';
 import type ReconnectingWS from 'reconnecting-websocket';
-import { Json } from '@lcdev/ts';
+import type { Json } from '@lcdev/ts';
 import { nanoid } from 'nanoid';
 
 export type MessageType = string;
