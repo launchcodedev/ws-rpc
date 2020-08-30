@@ -142,6 +142,24 @@ describe('server and client', () => {
     await client.close();
     await server.close();
   });
+
+  test('on close', async () => {
+    const port = await getPort();
+    const server = new Server(port);
+    const client = await new Client('localhost', port).waitForConnection();
+
+    expect.assertions(4);
+
+    client.onClose(() => expect(true).toBe(true));
+    client.onClose(() => expect(true).toBe(true));
+    server.onClose(() => expect(true).toBe(true));
+    server.onClose(() => expect(true).toBe(true));
+
+    await client.close();
+    await server.close();
+
+    await new Promise((r) => setTimeout(r, 100));
+  });
 });
 
 describe('reconnecting websocket', () => {

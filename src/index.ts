@@ -245,6 +245,10 @@ export class Client<
   async close() {
     this.websocket.close();
   }
+
+  onClose(cb: () => void) {
+    this.websocket.addEventListener('close', cb);
+  }
 }
 
 export class Server<
@@ -404,5 +408,9 @@ export class Server<
         else resolve();
       }),
     );
+  }
+
+  onClose(cb: () => void) {
+    this.websocket.on('close', cb);
   }
 }
