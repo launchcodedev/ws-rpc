@@ -13,7 +13,7 @@ yarn add @lcdev/ws-rpc@VERSION
 Normally, you'd have some shared code between server and client (backend and frontend). It would look like this:
 
 ```typescript
-import { Server as BaseServer, Client as BaseClient, MessageVariant, EventVariant } from 'ws-rpc';
+import { Server as BaseServer, Client as BaseClient, MessageVariant, EventVariant } from '@lcdev/ws-rpc';
 
 export enum MessageType {
   Ping = 'Ping',
