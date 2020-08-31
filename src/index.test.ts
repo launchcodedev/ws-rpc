@@ -166,6 +166,31 @@ describe('reconnecting websocket', () => {
   test('disconnection', async () => {
     const port = await getPort();
     const server = new Server(port);
+    server.registerHandler('ping', () => 'pong');
+
+    const client = await new Client(
+      new ReconnectingWS(`ws://localhost:${port}`, [], { connectionTimeout: 10, WebSocket: WS }),
+    ).waitForConnection();
+
+    await expect(client.call('ping', {})).resolves.toEqual('pong');
+
+    // the first server was closed
+    await server.close();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // now there's a new server in its place
+    const server2 = new Server(port);
+    server2.registerHandler('ping', () => 'pong');
+
+    await expect(client.call('ping', {})).resolves.toEqual('pong');
+
+    await client.close();
+    await server2.close();
+  });
+
+  test('disconnection without handler', async () => {
+    const port = await getPort();
+    const server = new Server(port);
     const client = await new Client(
       new ReconnectingWS(`ws://localhost:${port}`, [], { connectionTimeout: 10, WebSocket: WS }),
     ).waitForConnection();

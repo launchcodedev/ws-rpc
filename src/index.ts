@@ -108,51 +108,54 @@ export class Client<
       console.error(err);
     });
 
-    this.connecting = new Promise((resolve, reject) => {
-      this.websocket.addEventListener('open', () => resolve());
-      this.websocket.addEventListener('error', (err) => reject(err));
+    const handleParsedMessage = async (parsed: H | E) => {
+      if ('err' in parsed) {
+        const { message, code, mid }: H[MessageTypes]['error'] = parsed;
 
-      const handleParsedMessage = async (parsed: H | E) => {
-        if ('err' in parsed) {
-          const { message, code, mid }: H[MessageTypes]['error'] = parsed;
+        this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
+        delete this.waitingForResponse[mid];
 
-          this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
-          delete this.waitingForResponse[mid];
+        return;
+      }
 
-          return;
+      if ('mt' in parsed) {
+        const response: H[MessageTypes]['response'] = parsed;
+        this.waitingForResponse[response.mid]?.(Promise.resolve(response));
+        delete this.waitingForResponse[response.mid];
+
+        return;
+      }
+
+      if ('ev' in parsed) {
+        const event: E[EventTypes] = parsed;
+        const eventType = event.ev as EventTypes;
+
+        // we reset onceEventHandlers right away, so that new messages don't hit them as well
+        const onceHandlers = this.onceEventHandlers[eventType];
+        this.onceEventHandlers[eventType] = [];
+
+        if (onceHandlers) {
+          await Promise.all(onceHandlers.map((handler) => handler(event.data)));
         }
 
-        if ('mt' in parsed) {
-          const response: H[MessageTypes]['response'] = parsed;
-          this.waitingForResponse[response.mid]?.(Promise.resolve(response));
-          delete this.waitingForResponse[response.mid];
+        await Promise.all(
+          this.eventHandlers[eventType]?.map((handler) => {
+            return handler(event.data);
+          }) ?? [],
+        );
+      }
+    };
 
-          return;
-        }
-
-        if ('ev' in parsed) {
-          const event: E[EventTypes] = parsed;
-          const eventType = event.ev as EventTypes;
-
-          // we reset onceEventHandlers right away, so that new messages don't hit them as well
-          const onceHandlers = this.onceEventHandlers[eventType];
-          this.onceEventHandlers[eventType] = [];
-
-          if (onceHandlers) {
-            await Promise.all(onceHandlers.map((handler) => handler(event.data)));
-          }
-
-          await Promise.all(
-            this.eventHandlers[eventType]?.map((handler) => {
-              return handler(event.data);
-            }) ?? [],
-          );
-        }
-      };
-
+    this.websocket.addEventListener('open', () => {
+      // re-register the message handler every 'open' event, for reconnecting-websocket
       this.websocket.addEventListener('message', ({ data }: { data: Deserializable }) => {
         this.deserialize<H | E>(data).then(handleParsedMessage).catch(console.error);
       });
+    });
+
+    this.connecting = new Promise((resolve, reject) => {
+      this.websocket.addEventListener('open', () => resolve());
+      this.websocket.addEventListener('error', (err) => reject(err));
     });
   }
 
