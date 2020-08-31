@@ -75,7 +75,7 @@ export class Client<
   E extends EventVariants<EventTypes>
 > {
   private readonly websocket: WebSocket;
-  private readonly connecting: Promise<void>;
+  private connecting: Promise<void>;
 
   private waitingForResponse: {
     [mid: string]: ((res: Promise<H[MessageTypes]['response']>) => void) | undefined;
@@ -146,16 +146,20 @@ export class Client<
       }
     };
 
+    // this can be reassigned, because it could re-open after the first rejection
+    this.connecting = new Promise((resolve, reject) => {
+      this.websocket.addEventListener('open', () => resolve());
+      this.websocket.addEventListener('error', (err) => reject(err));
+    });
+
     this.websocket.addEventListener('open', () => {
+      // we reassign this promise, which could have been initial rejected
+      this.connecting = Promise.resolve();
+
       // re-register the message handler every 'open' event, for reconnecting-websocket
       this.websocket.addEventListener('message', ({ data }: { data: Deserializable }) => {
         this.deserialize<H | E>(data).then(handleParsedMessage).catch(console.error);
       });
-    });
-
-    this.connecting = new Promise((resolve, reject) => {
-      this.websocket.addEventListener('open', () => resolve());
-      this.websocket.addEventListener('error', (err) => reject(err));
     });
   }
 
@@ -175,6 +179,7 @@ export class Client<
 
   async waitForConnection() {
     await this.connecting;
+
     return this;
   }
 
@@ -182,7 +187,7 @@ export class Client<
     req: H[T]['request'],
     timeoutMS: number = 15000,
   ): Promise<H[T]['response']> {
-    await this.connecting;
+    await this.waitForConnection();
 
     const response = new Promise<H[T]['response']>((resolve, reject) => {
       this.waitingForResponse[req.mid] = (res) => res.then(resolve, reject);
@@ -217,7 +222,7 @@ export class Client<
   }
 
   async sendEventRaw<T extends EventTypes>(event: E[T]) {
-    await this.connecting;
+    await this.waitForConnection();
     this.websocket.send(await this.serialize(event));
   }
 

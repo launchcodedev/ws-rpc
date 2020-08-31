@@ -163,14 +163,20 @@ describe('server and client', () => {
 });
 
 describe('reconnecting websocket', () => {
+  const fastReconnectingWS = (port: number) =>
+    new ReconnectingWS(`ws://localhost:${port}`, [], {
+      connectionTimeout: 10,
+      minReconnectionDelay: 10,
+      maxReconnectionDelay: 10,
+      WebSocket: WS,
+    });
+
   test('disconnection', async () => {
     const port = await getPort();
     const server = new Server(port);
     server.registerHandler('ping', () => 'pong');
 
-    const client = await new Client(
-      new ReconnectingWS(`ws://localhost:${port}`, [], { connectionTimeout: 10, WebSocket: WS }),
-    ).waitForConnection();
+    const client = await new Client(fastReconnectingWS(port)).waitForConnection();
 
     await expect(client.call('ping', {})).resolves.toEqual('pong');
 
@@ -191,9 +197,7 @@ describe('reconnecting websocket', () => {
   test('disconnection without handler', async () => {
     const port = await getPort();
     const server = new Server(port);
-    const client = await new Client(
-      new ReconnectingWS(`ws://localhost:${port}`, [], { connectionTimeout: 10, WebSocket: WS }),
-    ).waitForConnection();
+    const client = await new Client(fastReconnectingWS(port)).waitForConnection();
 
     // the server closed before trying to ping
     await server.close();
@@ -208,5 +212,22 @@ describe('reconnecting websocket', () => {
 
     await client.close();
     await newServer.close();
+  });
+
+  test('connect to server after first rejection', async () => {
+    const port = await getPort();
+    const client = new Client(fastReconnectingWS(port));
+
+    await expect(client.waitForConnection()).rejects.toBeTruthy();
+
+    const server = new Server(port);
+    server.registerHandler('ping', () => 'pong');
+    await new Promise((r) => setTimeout(r, 100));
+
+    await expect(client.waitForConnection()).resolves.toBeTruthy();
+    await expect(client.call('ping', {})).resolves.toEqual('pong');
+
+    await client.close();
+    await server.close();
   });
 });
