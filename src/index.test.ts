@@ -37,10 +37,7 @@ describe('server and client', () => {
       throw new Error('something went wrong');
     });
 
-    await expect(client.call('foo', {})).rejects.toHaveProperty(
-      'message',
-      'Error: something went wrong',
-    );
+    await expect(client.call('foo', {})).rejects.toHaveProperty('message', 'something went wrong');
 
     await client.close();
     await server.close();
@@ -138,6 +135,24 @@ describe('server and client', () => {
     await expect(client.call('foo', undefined)).rejects.toThrow(
       "Function 'foo' had no handlers in the server",
     );
+
+    await client.close();
+    await server.close();
+  });
+
+  test('error with data', async () => {
+    const port = await getPort();
+    const server = new Server(port);
+    const client = await new Client('localhost', port).waitForConnection();
+
+    server.registerHandler('foo', async () => {
+      throw Object.assign(new Error('something went wrong'), { foobar: 'baz' });
+    });
+
+    await expect(client.call('foo', undefined)).rejects.toMatchObject({
+      message: 'something went wrong',
+      foobar: 'baz',
+    });
 
     await client.close();
     await server.close();

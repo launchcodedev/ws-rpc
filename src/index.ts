@@ -50,6 +50,8 @@ export type MessageVariant<
     message: string;
     /** Identifier of the error */
     code?: number;
+    /** Any extra data attached to the error  */
+    data?: Serializable;
   };
 };
 
@@ -110,9 +112,10 @@ export class Client<
 
     const handleParsedMessage = async (parsed: H | E) => {
       if ('err' in parsed) {
-        const { message, code, mid }: H[MessageTypes]['error'] = parsed;
+        const { message, code, data, mid }: H[MessageTypes]['error'] = parsed;
 
-        this.waitingForResponse[mid]?.(Promise.reject(new RPCError(message, code)));
+        const error = Object.assign(new RPCError(message, code), data);
+        this.waitingForResponse[mid]?.(Promise.reject(error));
         delete this.waitingForResponse[mid];
 
         return;
@@ -302,7 +305,18 @@ export class Server<
                   await this.serialize({ err: true, mid, message: err.toString(), code: err.code }),
                 );
               } else if (typeof err === 'object') {
-                ws.send(await this.serialize({ err: true, mid, message: err.toString() })); // eslint-disable-line
+                const { message, code, ...data } = err as { message?: string; code?: number };
+
+                ws.send(
+                  await this.serialize({
+                    err: true,
+                    mid,
+                    // eslint-disable-next-line
+                    message: message ?? err.toString(),
+                    code,
+                    data,
+                  }),
+                );
               } else {
                 ws.send(
                   await this.serialize({ err: true, mid, message: 'An unkown error occured' }),
