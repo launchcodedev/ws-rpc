@@ -86,13 +86,15 @@ export class Client<
   private eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
   private onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
+  constructor(websocket: WS);
   constructor(websocket: WebSocket);
   constructor(websocket: ReconnectingWS);
   constructor(host: string, port: number);
 
-  constructor(hostOrWebsocket: string | WebSocket | ReconnectingWS, port?: number) {
+  constructor(hostOrWebsocket: string | WS | WebSocket | ReconnectingWS, port?: number) {
     if (typeof hostOrWebsocket === 'string' && port !== undefined) {
       const host = hostOrWebsocket;
+
       if (typeof WebSocket === 'undefined') {
         this.websocket = (new WS(`ws://${host}:${port}`) as unknown) as WebSocket;
       } else {
