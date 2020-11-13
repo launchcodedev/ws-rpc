@@ -278,8 +278,15 @@ export class Server<
   private eventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
   private onceEventHandlers: { [T in EventTypes]?: Fn<E[T]['data']>[] } = {};
 
-  constructor(port: number) {
-    this.websocket = new WS.Server({ port });
+  constructor(port: number);
+  constructor(server: WS.Server);
+
+  constructor(portOrServer: WS.Server | number) {
+    if (typeof portOrServer === 'number') {
+      this.websocket = new WS.Server({ port: portOrServer });
+    } else {
+      this.websocket = portOrServer;
+    }
 
     this.websocket.on('connection', async (ws) => {
       this.connections.push(ws);
