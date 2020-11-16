@@ -108,10 +108,6 @@ export class Client<
       this.websocket.binaryType = 'arraybuffer';
     }
 
-    this.websocket.addEventListener('error', (err) => {
-      console.error(err);
-    });
-
     const handleParsedMessage = async (parsed: H | E) => {
       if ('err' in parsed) {
         const { message, code, data, mid }: H[MessageTypes]['error'] = parsed;
@@ -257,6 +253,10 @@ export class Client<
 
   async close() {
     this.websocket.close();
+  }
+
+  onError(cb: (error: any) => void) {
+    this.websocket.addEventListener('error', cb);
   }
 
   onClose(cb: () => void) {
@@ -439,6 +439,10 @@ export class Server<
         else resolve();
       }),
     );
+  }
+
+  onError(cb: (error: any) => void) {
+    this.websocket.on('error', cb);
   }
 
   onClose(cb: () => void) {
