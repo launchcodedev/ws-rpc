@@ -249,6 +249,7 @@ export class Client<
 
   removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e]?.filter((v) => v !== handler);
+    this.onceEventHandlers[e] = this.onceEventHandlers[e]?.filter((v) => v !== handler);
   }
 
   async close() {
@@ -430,6 +431,7 @@ export class Server<
 
   removeEventListener<T extends EventTypes>(e: T, handler: Fn<E[T]['data']>) {
     this.eventHandlers[e] = this.eventHandlers[e]?.filter((v) => v !== handler);
+    this.onceEventHandlers[e] = this.onceEventHandlers[e]?.filter((v) => v !== handler);
   }
 
   async close() {
