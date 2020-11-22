@@ -1,248 +1,85 @@
 import getPort from 'get-port';
-import WS from 'ws';
-import ReconnectingWS from 'reconnecting-websocket';
-import { Server, Client } from './index';
+import { jsonSerialization, build, Builder } from './index';
+import bsonSerialization from './bson';
 
-describe('server', () => {
-  test('start', async () => {
-    const server = new Server(await getPort());
+const setupClientAndServer = async <B extends Builder<any>>(
+  builder: B,
+  handlers: B['FunctionHandlers'],
+): Promise<[B['Connection'], B['Connection']]> => {
+  const port = await getPort();
+  const server = await builder.server(handlers).listen(port);
+  const client = await builder.client().connect(port);
 
-    await server.close();
+  return [client, server];
+};
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe('server & client connection', () => {
+  it('sends and receives a basic function', async () => {
+    const common = build(jsonSerialization).func<'test'>();
+    const [client, server] = await setupClientAndServer(common, { async test() {} });
+
+    try {
+      await client.test();
+      await server.test();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it('sends and receives a basic event', async () => {
+    const common = build(jsonSerialization).event<'test'>();
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      expect.assertions(2);
+
+      client.on('test', (data) => expect(data).toBeUndefined());
+      server.on('test', (data) => expect(data).toBeUndefined());
+
+      await client.sendEvent('test');
+      await server.sendEvent('test');
+
+      await delay(10); // unfortunately, we have to wait for the events to be processed
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
   });
 });
 
-describe('server and client', () => {
-  test('basic message', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = new Client('localhost', port);
+describe('error conditions', () => {});
 
-    server.registerHandler('foo', async () => {
-      return { response: true };
+describe('reconnecting-websocket', () => {});
+
+describe('custom serialization formats', () => {
+  it('uses bson format to serialize Dates', async () => {
+    const common = build(bsonSerialization)
+      .event<'test', { at: Date }>()
+      .func<'test', { at: Date }, { ret: Date }>();
+
+    const [client, server] = await setupClientAndServer(common, {
+      async test({ at }) {
+        expect(at).toBeInstanceOf(Date);
+
+        return { ret: new Date() };
+      },
     });
 
-    await expect(client.call('foo', {})).resolves.toEqual({ response: true });
-    await expect(client.call('bar', {}, 10)).rejects.toBeTruthy();
+    try {
+      // 2 in listeners, 2 in func handler, 2 of return values
+      expect.assertions(6);
 
-    await client.close();
-    await server.close();
-  });
+      client.on('test', ({ at }) => expect(at).toBeInstanceOf(Date));
+      server.on('test', ({ at }) => expect(at).toBeInstanceOf(Date));
 
-  test('error in handler', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = new Client('localhost', port);
+      await client.sendEvent('test', { at: new Date() });
+      await server.sendEvent('test', { at: new Date() });
 
-    server.registerHandler('foo', async () => {
-      throw new Error('something went wrong');
-    });
-
-    await expect(client.call('foo', {})).rejects.toHaveProperty('message', 'something went wrong');
-
-    await client.close();
-    await server.close();
-  });
-
-  test('on event', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    expect.assertions(2);
-
-    client.on('foo', async (event) => {
-      expect(event).toEqual('bar');
-    });
-
-    await server.sendEvent('foo', 'bar');
-    await server.sendEvent('foo', 'bar');
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    await client.close();
-    await server.close();
-  });
-
-  test('once event', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    expect.assertions(1);
-
-    client.once('foo', async (event) => {
-      expect(event).toEqual('bar');
-    });
-
-    // trigger twice, but should only be seen once
-    await server.sendEvent('foo', 'bar');
-    await server.sendEvent('foo', 'bar');
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    await client.close();
-    await server.close();
-  });
-
-  test('remove listener', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    expect.assertions(1);
-
-    const handler = async () => expect(true).toBe(true);
-    client.on('foo', handler);
-
-    await server.sendEvent('foo');
-    await new Promise((r) => setTimeout(r, 100));
-    client.removeEventListener('foo', handler);
-
-    await server.sendEvent('foo');
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    await client.close();
-    await server.close();
-  });
-
-  test('remove listener callback', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    expect.assertions(1);
-
-    const removeHandler = client.on('foo', async () => expect(true).toBe(true));
-
-    await server.sendEvent('foo');
-    await new Promise((r) => setTimeout(r, 100));
-    removeHandler();
-
-    await server.sendEvent('foo');
-
-    await new Promise((r) => setTimeout(r, 100));
-
-    await client.close();
-    await server.close();
-  });
-
-  test('unimplemented function', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    await expect(client.call('foo', undefined)).rejects.toThrow(
-      "Function 'foo' had no handlers in the server",
-    );
-
-    await client.close();
-    await server.close();
-  });
-
-  test('error with data', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    server.registerHandler('foo', async () => {
-      throw Object.assign(new Error('something went wrong'), { foobar: 'baz' });
-    });
-
-    await expect(client.call('foo', undefined)).rejects.toMatchObject({
-      message: 'something went wrong',
-      foobar: 'baz',
-    });
-
-    await client.close();
-    await server.close();
-  });
-
-  test('on close', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client('localhost', port).waitForConnection();
-
-    expect.assertions(4);
-
-    client.onClose(() => expect(true).toBe(true));
-    client.onClose(() => expect(true).toBe(true));
-    server.onClose(() => expect(true).toBe(true));
-    server.onClose(() => expect(true).toBe(true));
-
-    await client.close();
-    await server.close();
-
-    await new Promise((r) => setTimeout(r, 100));
-  });
-});
-
-describe('reconnecting websocket', () => {
-  const fastReconnectingWS = (port: number) =>
-    new ReconnectingWS(`ws://localhost:${port}`, [], {
-      connectionTimeout: 10,
-      minReconnectionDelay: 10,
-      maxReconnectionDelay: 10,
-      WebSocket: WS,
-    });
-
-  test('disconnection', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    server.registerHandler('ping', () => 'pong');
-
-    const client = await new Client(fastReconnectingWS(port)).waitForConnection();
-
-    await expect(client.call('ping', {})).resolves.toEqual('pong');
-
-    // the first server was closed
-    await server.close();
-    await new Promise((r) => setTimeout(r, 100));
-
-    // now there's a new server in its place
-    const server2 = new Server(port);
-    server2.registerHandler('ping', () => 'pong');
-
-    await expect(client.call('ping', {})).resolves.toEqual('pong');
-
-    await client.close();
-    await server2.close();
-  });
-
-  test('disconnection without handler', async () => {
-    const port = await getPort();
-    const server = new Server(port);
-    const client = await new Client(fastReconnectingWS(port)).waitForConnection();
-
-    // the server closed before trying to ping
-    await server.close();
-
-    await expect(client.call('ping', {}, 10)).rejects.toBeTruthy();
-
-    // now there's a new server in its place
-    const newServer = new Server(port);
-    newServer.registerHandler('ping', () => 'pong');
-
-    await expect(client.call('ping', {})).resolves.toEqual('pong');
-
-    await client.close();
-    await newServer.close();
-  });
-
-  test('connect to server after first rejection', async () => {
-    const port = await getPort();
-    const client = new Client(fastReconnectingWS(port));
-
-    await expect(client.waitForConnection()).rejects.toBeTruthy();
-
-    const server = new Server(port);
-    server.registerHandler('ping', () => 'pong');
-    await new Promise((r) => setTimeout(r, 100));
-
-    await expect(client.waitForConnection()).resolves.toBeTruthy();
-    await expect(client.call('ping', {})).resolves.toEqual('pong');
-
-    await client.close();
-    await server.close();
+      expect(await client.test({ at: new Date() }).then((v) => v.ret)).toBeInstanceOf(Date);
+      expect(await server.test({ at: new Date() }).then((v) => v.ret)).toBeInstanceOf(Date);
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
   });
 });
