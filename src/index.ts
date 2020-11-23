@@ -110,7 +110,7 @@ export interface EventHandlers<Events extends EventVariants<EventName>> {
 
 /** Callable function that proxies to a specific RPC call */
 export type FunctionHandler<Function extends FunctionVariant<string, any, any, any>> = {
-  (args: Function['request']['data']): Promise<Function['response']['data']>;
+  (args: Function['request']['data'], timeoutMS?: number): Promise<Function['response']['data']>;
 };
 
 /** Callable functions that proxy to RPC calls. Available on client (calls server) and server (calls itself). */
@@ -456,7 +456,7 @@ function setupClient<
   });
 
   // TODO: connection errors
-  // TODO: connection closing
+  // TODO: connection closing events
 
   const client = new Proxy<Connection<Functions, Events>>({} as any, {
     get(_, prop) {
@@ -509,11 +509,10 @@ function setupClient<
         case 'then':
           return undefined;
 
-        // TODO: ping
         case 'ping':
         default:
           // all function calls go through here, it's why we set up a Proxy
-          return async (data: unknown) => {
+          return async (data: unknown, timeoutMS: number = 15000) => {
             const message = { mt: prop, data, mid: nanoid() };
 
             const response = new Promise((resolve, reject) => {
@@ -524,8 +523,19 @@ function setupClient<
 
             conn.send(await serialize(message));
 
-            // TODO: timeouts
-            return response;
+            const timeout = new Promise<void>((_, reject) =>
+              setTimeout(() => {
+                state.waitingForResponse.delete(message.mid);
+
+                reject(
+                  new Error(
+                    `Call to '${prop.toString()}' failed because it timed out in ${timeoutMS}ms`,
+                  ),
+                );
+              }, timeoutMS),
+            );
+
+            return Promise.race([response, timeout]);
           };
       }
     },
@@ -643,7 +653,7 @@ function setupServer<
   });
 
   // TODO: connection errors
-  // TODO: connection closing
+  // TODO: connection closing events
 
   const server = new Proxy<Connection<Functions, Events>>({} as any, {
     get(_, prop) {

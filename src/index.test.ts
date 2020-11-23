@@ -61,7 +61,23 @@ describe('server & client connection', () => {
   });
 });
 
-describe('error conditions', () => {});
+describe('error conditions', () => {
+  it('times out on function call', async () => {
+    const common = build(jsonSerialization).func<'test'>();
+    const [client, server] = await setupClientAndServer(common, {
+      async test() {
+        await delay(100);
+      },
+    });
+
+    try {
+      await expect(client.test(undefined, 10)).rejects.toThrow();
+      await expect(client.test(undefined, 200)).resolves.toBeUndefined();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+});
 
 describe('reconnecting-websocket', () => {});
 
