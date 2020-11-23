@@ -410,6 +410,10 @@ function setupClient<
       | Functions[string]['response']
       | Functions[string]['error'] = await deserialize(data);
 
+    if (typeof parsed !== 'object' || parsed === null) {
+      return;
+    }
+
     if ('err' in parsed) {
       const { message, code, data, mid: messageID } = parsed;
 
@@ -420,11 +424,7 @@ function setupClient<
         state.waitingForResponse.delete(messageID);
         notify(Promise.reject(error));
       }
-
-      return;
-    }
-
-    if ('mt' in parsed) {
+    } else if ('mt' in parsed) {
       const { mid: messageID, data } = parsed as Functions[string]['response'];
 
       if (state.waitingForResponse.has(messageID)) {
@@ -432,11 +432,7 @@ function setupClient<
         state.waitingForResponse.delete(messageID);
         notify(Promise.resolve(data));
       }
-
-      return;
-    }
-
-    if ('ev' in parsed) {
+    } else if ('ev' in parsed) {
       const { ev: eventType, data } = parsed;
       const handlers = state.eventHandlers.get(eventType) ?? [];
 
@@ -503,16 +499,18 @@ function setupClient<
             conn.send(await serialize({ ev: name, data }));
           };
 
-        // TODO: ping
         case 'close':
           return async () => {
+            // TODO: wait for events to propogate
             conn.close();
-            // TODO: wait
+            // TODO: wait until connection is closed
           };
 
         case 'then':
           return undefined;
 
+        // TODO: ping
+        case 'ping':
         default:
           // all function calls go through here, it's why we set up a Proxy
           return async (data: unknown) => {
@@ -584,17 +582,23 @@ function setupServer<
       | Functions[string]['response']
       | Functions[string]['error'] = await deserialize(data);
 
+    if (typeof parsed !== 'object' || parsed === null) {
+      return;
+    }
+
     if ('err' in parsed) {
       const { message, code, data, mid: messageID } = parsed;
       const error = Object.assign(new Error(message), { code, data });
 
       // TODO: I think we just ignore these? Client shouldn't send errors.
-
-      return;
-    }
-
-    if ('mt' in parsed) {
+    } else if ('mt' in parsed) {
       const { mt, mid, data } = parsed;
+
+      if (mt === 'ping') {
+        conn.send(await serialize({ mt, mid }));
+
+        return;
+      }
 
       if (!handlers[mt]) {
         conn.send(
@@ -616,11 +620,7 @@ function setupServer<
           conn.send(await serialize({ mid, err: true, message: error.message }));
         },
       );
-
-      return;
-    }
-
-    if ('ev' in parsed) {
+    } else if ('ev' in parsed) {
       const { ev: eventType, data } = parsed;
       const handlers = state.eventHandlers.get(eventType) ?? [];
 
@@ -692,11 +692,18 @@ function setupServer<
             }
           };
 
-        // TODO: ping
         case 'close':
           return async () => {
+            // TODO: wait for events to propogate
             conn.close();
-            // TODO: wait
+            // TODO: wait until connection is closed
+          };
+
+        case 'ping':
+          return async () => {
+            for (const conn of activeConnections) {
+              conn.send('"ping"');
+            }
           };
 
         case 'then':
@@ -718,69 +725,3 @@ const _test1: WebSocketClient = (null as any) as WS;
 const _test2: WebSocketClient = (null as any) as WebSocket;
 const _test3: WebSocketServer = (null as any) as WS.Server;
 const _test4: WebSocketServer = (null as any) as ReconnectingWS;
-
-// testing
-// const common = build({ deserialize: JSON.parse, serialize: JSON.stringify })
-//   .func<'double' | '2x', { input: number }, { output: number }>()
-//   .func<'triple', { input: number }, { output: number }>()
-//   .event<'single'>()
-//   .event<'random', { number: number }>()
-//   .event<'scheduled', { number: number }>();
-//
-// common
-//   .server({
-//     async '2x'({ input }) {
-//       return { output: input * 2 };
-//     },
-//     async double({ input }) {
-//       return { output: input * 2 };
-//     },
-//     async triple({ input }) {
-//       return { output: input * 3 };
-//     },
-//   })
-//   .listen(3000)
-//   .then((server) => {
-//     console.log('listening');
-//
-//     setTimeout(() => {
-//       server.sendEvent('single');
-//     }, 500);
-//
-//     const runRandom = () => {
-//       setTimeout(() => {
-//         server.sendEvent('random', { number: Math.random() });
-//         runRandom();
-//       }, Math.random() * 500);
-//     };
-//
-//     runRandom();
-//
-//     setInterval(() => {
-//       server.sendEvent('scheduled', { number: Math.random() });
-//     }, 500);
-//   })
-//   .catch(console.error);
-//
-// common
-//   .client()
-//   .connect(3000)
-//   .then((client) => {
-//     console.log('connected');
-//
-//     client.on('single', () => {
-//       console.log('received single');
-//     });
-//
-//     client.on('random', ({ number }) => {
-//       console.log('received random', number);
-//     });
-//
-//     client.on('scheduled', ({ number }) => {
-//       console.log('received scheduled', number);
-//     });
-//
-//     client.double({ input: 2 }).then(({ output }) => console.log('doubled to', output));
-//     client.triple({ input: 2 }).then(({ output }) => console.log('tripled to', output));
-//   })
-//   .catch(console.error);

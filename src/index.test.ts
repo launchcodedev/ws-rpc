@@ -16,6 +16,18 @@ const setupClientAndServer = async <B extends Builder<any>>(
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('server & client connection', () => {
+  it('sends and receives ping', async () => {
+    const common = build(jsonSerialization);
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      await client.ping();
+      await server.ping();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
   it('sends and receives a basic function', async () => {
     const common = build(jsonSerialization).func<'test'>();
     const [client, server] = await setupClientAndServer(common, { async test() {} });
@@ -41,7 +53,8 @@ describe('server & client connection', () => {
       await client.sendEvent('test');
       await server.sendEvent('test');
 
-      await delay(10); // unfortunately, we have to wait for the events to be processed
+      // TODO: close() should finish propagation
+      await delay(10);
     } finally {
       await Promise.all([client.close(), server.close()]);
     }
