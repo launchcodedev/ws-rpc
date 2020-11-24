@@ -344,12 +344,15 @@ export function build<Serializable>(
             if (typeof globalThis !== 'undefined' && 'WebSocket' in globalThis) {
               return Promise.resolve(globalThis.WebSocket);
             }
+
             if (typeof window !== 'undefined' && 'WebSocket' in window) {
               return Promise.resolve(window.WebSocket);
             }
+
             if (typeof global !== 'undefined' && 'WebSocket' in global) {
               return Promise.resolve(global.WebSocket);
             }
+
             return import('ws').then((ws) => ws.default);
           };
 
@@ -581,15 +584,15 @@ function setupClient<
 
             conn.send(await serialize(message));
 
-            const [timeout, timeoutId] = createTimeout(
+            const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
               new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
             );
 
-            return Promise.race([response, timeout]).finally(() => {
-              waitingForResponse.delete(message.mid);
-              clearTimeout(timeoutId);
-            });
+            return Promise.race([
+              response,
+              timeout.then(() => waitingForResponse.delete(message.mid)),
+            ]).finally(clearTimeout);
           };
         }
       }
@@ -765,12 +768,12 @@ function setupServer<
               incomingPongListeners.add(listenForPongs);
             });
 
-            const [timeout, timeoutId] = createTimeout(
+            const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
               new Error(`Pinging all clients exceeded timeout ${timeoutMS}ms`),
             );
 
-            await Promise.race([waitForPongs, timeout]).finally(() => clearTimeout(timeoutId));
+            await Promise.race([waitForPongs, timeout]).finally(clearTimeout);
           };
 
         case 'close':
@@ -800,14 +803,12 @@ function setupServer<
 
             const response = handler(data);
 
-            const [timeout, timeoutId] = createTimeout(
+            const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
               new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
             );
 
-            return Promise.race([response, timeout]).finally(() => {
-              clearTimeout(timeoutId);
-            });
+            return Promise.race([response, timeout]).finally(clearTimeout);
           };
         }
       }
@@ -834,13 +835,16 @@ function setupEventHandling<Events extends EventVariants<string>>(
       const error = eventValidation[eventType](data);
 
       if (error) {
-        // TODO
+        throw error;
       }
     }
 
     for (const handler of handlers) {
-      // TODO: error handling
-      handler(data);
+      try {
+        handler(data);
+      } catch (error) {
+        // TODO: error handling
+      }
     }
   }
 
@@ -884,7 +888,7 @@ function setupEventHandling<Events extends EventVariants<string>>(
   };
 }
 
-function createTimeout(ms: number, error: Error): [Promise<void>, NodeJS.Timeout] {
+function createTimeout(ms: number, error: Error): [Promise<void>, () => void] {
   let timeoutId: NodeJS.Timeout;
 
   const promise = new Promise<void>((_, reject) => {
@@ -893,7 +897,12 @@ function createTimeout(ms: number, error: Error): [Promise<void>, NodeJS.Timeout
     }, ms);
   });
 
-  return [promise, timeoutId!];
+  return [
+    promise,
+    () => {
+      clearTimeout(timeoutId);
+    },
+  ];
 }
 
 // ts assertions
