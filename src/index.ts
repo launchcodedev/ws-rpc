@@ -195,15 +195,21 @@ export class Client<
       this.serialize(req).then((msg) => this.websocket.send(msg), reject);
     });
 
+    let timeoutId: NodeJS.Timeout;
+
     return Promise.race([
       response,
-      new Promise<H[T]['response']>((_, reject) =>
-        setTimeout(() => {
+      new Promise<H[T]['response']>((_, reject) => {
+        timeoutId = setTimeout(() => {
           delete this.waitingForResponse[req.mid];
           reject(new RPCError(`Call to ${req.mt} failed because it timed out in ${timeoutMS}ms`));
-        }, timeoutMS),
-      ),
-    ]);
+        }, timeoutMS);
+      }),
+    ]).finally(() => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    });
   }
 
   async call<T extends MessageTypes>(
