@@ -99,6 +99,9 @@ export interface EventHandlers<Events extends EventVariants<EventName>> {
     callback: (data: Events[T]['data']) => void,
   ): CancelEventListener;
 
+  /** Waits until an event is called once */
+  one<T extends keyof Events>(name: T): Promise<Events[T]['data']>;
+
   /** Unregister an event handler */
   off<T extends keyof Events>(name: T, callback?: (data: Events[T]['data']) => void): void;
 
@@ -212,119 +215,7 @@ export const jsonSerialization: DataSerialization<Json> = {
   deserialize: JSON.parse,
 };
 
-/** Builder for Client/Server pair */
-export function build<Serializable>(
-  serializer: DataSerialization<Serializable>,
-): Builder<Serializable> {
-  return {
-    // Associated types
-    Client: undefined as any,
-    Server: undefined as any,
-    Connection: undefined as any,
-    Functions: undefined as any,
-    Events: undefined as any,
-    FunctionHandlers: undefined as any,
-
-    // just cheat the type system, since constraints are enforce in the Builder type
-    // the nice thing is that there is no runtime behavior here (downside is no request validation, of course)
-    func() {
-      return build(serializer) as any;
-    },
-    event() {
-      return build(serializer) as any;
-    },
-
-    // build up a Client type that'll connect lazily
-    client() {
-      async function connect(
-        ...args: unknown[]
-      ): Promise<Connection<FunctionVariants, EventVariants>> {
-        let connection: WebSocketClient;
-
-        // resolve to the WebSocket client library - use the global and avoid 'ws' if possible
-        const getWebSocket = () => {
-          if (typeof globalThis !== 'undefined' && 'WebSocket' in globalThis) {
-            return Promise.resolve(globalThis.WebSocket);
-          }
-          if (typeof window !== 'undefined' && 'WebSocket' in window) {
-            return Promise.resolve(window.WebSocket);
-          }
-          if (typeof global !== 'undefined' && 'WebSocket' in global) {
-            return Promise.resolve(global.WebSocket);
-          }
-          return import('ws').then((ws) => ws.default);
-        };
-
-        // see the Client::connect function for overloads
-        if (typeof args[0] === 'number') {
-          const [port, secure] = args as [number, boolean | undefined];
-
-          return connect('127.0.0.1', port, secure);
-        }
-        if (typeof args[0] === 'string') {
-          const [host, port, secure] = args as [string, number, boolean | undefined];
-          const WebSocket = await getWebSocket();
-
-          if (secure === true) {
-            connection = new WebSocket(`wss://${host}:${port}`);
-          } else {
-            connection = new WebSocket(`ws://${host}:${port}`);
-          }
-        } else {
-          const [client] = args as [WebSocketClient];
-
-          connection = client;
-        }
-
-        // TODO: connection timeouts
-        await new Promise<void>((resolve, reject) => {
-          connection.addEventListener('open', () => resolve());
-          connection.addEventListener('error', (err) => reject(err));
-        });
-
-        return setupClient(connection, serializer);
-      }
-
-      return { connect };
-    },
-
-    // build up a Server type that'll listen lazily
-    server(handlers) {
-      async function listen(...args: unknown[]) {
-        let connection: WebSocketServer;
-
-        // see the Server::listen function for overloads
-        if (typeof args[0] === 'number') {
-          const [port] = args as [number];
-          const { Server: WebSocketServer } = await import('ws');
-
-          connection = new WebSocketServer({ port });
-        } else if (typeof args[0] === 'string') {
-          const [host, port] = args as [string, number];
-          const { Server: WebSocketServer } = await import('ws');
-
-          connection = new WebSocketServer({ host, port });
-        } else if (args[0] instanceof (await import('http')).Server) {
-          const { Server: WebSocketServer } = await import('ws');
-
-          // TODO: closing the server when closing
-          connection = new WebSocketServer({ server: args[0] });
-        } else if (args[0] instanceof (await import('https')).Server) {
-          const { Server: WebSocketServer } = await import('ws');
-
-          // TODO: closing the server when closing
-          connection = new WebSocketServer({ server: args[0] });
-        } else {
-          connection = args[0] as WebSocketServer;
-        }
-
-        return setupServer(connection, handlers, serializer);
-      }
-
-      return { listen };
-    },
-  };
-}
+export type ValidationFunction<Data> = (data: Data) => (Error & { code?: number | string }) | false;
 
 /** Builder for Client/Server pair */
 export type Builder<
@@ -336,27 +227,52 @@ export type Builder<
   Events extends EventVariants<EventName, Serializable> = EventVariants<never, Serializable>
 > = {
   /** Adds a function type that can be called */
-  func: <
-    Name extends FunctionName = never,
-    Request extends Serializable | void = void,
-    Response extends Serializable | void = void
-  >() => Builder<
-    Serializable,
-    Functions & AddFunctionVariant<Name, Request, Response, Serializable>,
-    Events
-  >;
+  func: {
+    <
+      Name extends FunctionName = never,
+      Request extends Serializable | void = void,
+      Response extends Serializable | void = void
+    >(): Builder<
+      Serializable,
+      Functions & AddFunctionVariant<Name, Request, Response, Serializable>,
+      Events
+    >;
+
+    <
+      Name extends FunctionName = never,
+      Request extends Serializable | void = void,
+      Response extends Serializable | void = void
+    >(
+      name: Name,
+      validation: ValidationFunction<Request>,
+    ): Builder<
+      Serializable,
+      Functions & AddFunctionVariant<Name, Request, Response, Serializable>,
+      Events
+    >;
+  };
 
   /** Adds an event type that can be triggered from either side */
-  event: <Name extends EventName = never, Data extends Serializable | void = void>() => Builder<
-    Serializable,
-    Functions,
-    Events & AddEventVariant<Name, Data, Serializable>
-  >;
+  event: {
+    <Name extends EventName = never, Data extends Serializable | void = void>(): Builder<
+      Serializable,
+      Functions,
+      Events & AddEventVariant<Name, Data, Serializable>
+    >;
+
+    <Name extends EventName = never, Data extends Serializable | void = void>(
+      name: Name,
+      validation: ValidationFunction<Data>,
+    ): Builder<Serializable, Functions, Events & AddEventVariant<Name, Data, Serializable>>;
+  };
 
   /** Create a client with the built up types */
-  client(): Client<Functions, Events>;
+  client(shouldValidate?: boolean): Client<Functions, Events>;
   /** Create a server with the built up types */
-  server(handlers: FunctionHandlers<Functions>): Server<Functions, Events>;
+  server(
+    handlers: FunctionHandlers<Functions>,
+    shouldValidate?: boolean,
+  ): Server<Functions, Events>;
 
   /** Associated type representing the client() return value */
   Client: Client<Functions, Events>;
@@ -372,80 +288,171 @@ export type Builder<
   FunctionHandlers: FunctionHandlers<Functions>;
 };
 
+/** Builder for Client/Server pair */
+export function build<Serializable>(
+  serializer: DataSerialization<Serializable>,
+): Builder<Serializable> {
+  return buildInner(serializer, {}, {});
+
+  function buildInner<Serializable>(
+    serializer: DataSerialization<Serializable>,
+    functionValidation: { [k: string]: ValidationFunction<Serializable> },
+    eventValidation: { [k: string]: ValidationFunction<Serializable> },
+  ): Builder<Serializable> {
+    return {
+      // Associated types
+      Client: undefined as any,
+      Server: undefined as any,
+      Connection: undefined as any,
+      Functions: undefined as any,
+      Events: undefined as any,
+      FunctionHandlers: undefined as any,
+
+      func(name?: string, validation?: ValidationFunction<Serializable>) {
+        if (!name || !validation) {
+          return buildInner(serializer, functionValidation, eventValidation);
+        }
+
+        return buildInner(
+          serializer,
+          { ...functionValidation, [name]: validation },
+          eventValidation,
+        );
+      },
+
+      event(name?: string, validation?: ValidationFunction<Serializable>) {
+        if (!name || !validation) {
+          return buildInner(serializer, functionValidation, eventValidation);
+        }
+
+        return buildInner(serializer, functionValidation, {
+          ...eventValidation,
+          [name]: validation,
+        });
+      },
+
+      // build up a Client type that'll connect lazily
+      client(shouldValidate = true) {
+        async function connect(
+          ...args: unknown[]
+        ): Promise<Connection<FunctionVariants, EventVariants>> {
+          let connection: WebSocketClient;
+
+          // resolve to the WebSocket client library - use the global and avoid 'ws' if possible
+          const getWebSocket = () => {
+            if (typeof globalThis !== 'undefined' && 'WebSocket' in globalThis) {
+              return Promise.resolve(globalThis.WebSocket);
+            }
+            if (typeof window !== 'undefined' && 'WebSocket' in window) {
+              return Promise.resolve(window.WebSocket);
+            }
+            if (typeof global !== 'undefined' && 'WebSocket' in global) {
+              return Promise.resolve(global.WebSocket);
+            }
+            return import('ws').then((ws) => ws.default);
+          };
+
+          // see the Client::connect function for overloads
+          if (typeof args[0] === 'number') {
+            const [port, secure] = args as [number, boolean | undefined];
+
+            return connect('127.0.0.1', port, secure);
+          }
+          if (typeof args[0] === 'string') {
+            const [host, port, secure] = args as [string, number, boolean | undefined];
+            const WebSocket = await getWebSocket();
+
+            if (secure === true) {
+              connection = new WebSocket(`wss://${host}:${port}`);
+            } else {
+              connection = new WebSocket(`ws://${host}:${port}`);
+            }
+          } else {
+            const [client] = args as [WebSocketClient];
+
+            connection = client;
+          }
+
+          // TODO: connection timeouts
+          await new Promise<void>((resolve, reject) => {
+            connection.addEventListener('open', () => resolve());
+            connection.addEventListener('error', (err) => reject(err));
+          });
+
+          return setupClient(
+            connection,
+            serializer,
+            functionValidation,
+            eventValidation,
+            shouldValidate,
+          );
+        }
+
+        return { connect };
+      },
+
+      // build up a Server type that'll listen lazily
+      server(handlers, shouldValidate = true) {
+        async function listen(...args: unknown[]) {
+          let connection: WebSocketServer;
+
+          // see the Server::listen function for overloads
+          if (typeof args[0] === 'number') {
+            const [port] = args as [number];
+            const { Server: WebSocketServer } = await import('ws');
+
+            connection = new WebSocketServer({ port });
+          } else if (typeof args[0] === 'string') {
+            const [host, port] = args as [string, number];
+            const { Server: WebSocketServer } = await import('ws');
+
+            connection = new WebSocketServer({ host, port });
+          } else if (args[0] instanceof (await import('http')).Server) {
+            const { Server: WebSocketServer } = await import('ws');
+
+            // TODO: closing the server when closing
+            connection = new WebSocketServer({ server: args[0] });
+          } else if (args[0] instanceof (await import('https')).Server) {
+            const { Server: WebSocketServer } = await import('ws');
+
+            // TODO: closing the server when closing
+            connection = new WebSocketServer({ server: args[0] });
+          } else {
+            connection = args[0] as WebSocketServer;
+          }
+
+          return setupServer(
+            connection,
+            handlers,
+            serializer,
+            functionValidation,
+            eventValidation,
+            shouldValidate,
+          );
+        }
+
+        return { listen };
+      },
+    };
+  }
+}
+
 function setupClient<
   Functions extends FunctionVariants<string>,
   Events extends EventVariants<string>
 >(
   conn: WebSocketClient,
   { deserialize, serialize }: DataSerialization<any>,
+  functionValidation: { [k: string]: ValidationFunction<any> },
+  eventValidation: { [k: string]: ValidationFunction<any> },
+  shouldValidate: boolean,
 ): Connection<Functions, Events> {
   if ('binaryType' in conn) {
     conn.binaryType = 'arraybuffer';
   }
 
-  type EventHandler = {
-    once?: boolean;
-    (res: Events[string]['data']): void;
-  };
-
-  type WaitingForResponse = (res: Promise<Functions[string]['response']['data']>) => void;
-
-  interface State {
-    eventHandlers: Map<keyof Events, Set<EventHandler>>;
-    waitingForResponse: Map<string, WaitingForResponse>;
-  }
-
-  const state: State = {
-    eventHandlers: new Map(),
-    waitingForResponse: new Map(),
-  };
-
   const on: WebSocketClient['addEventListener'] = conn.addEventListener.bind(conn);
   const off: WebSocketClient['removeEventListener'] = conn.removeEventListener.bind(conn);
-
-  const messageHandler = async ({ data }: { data: Serialized }) => {
-    const parsed:
-      | Events[string]
-      | Functions[string]['request']
-      | Functions[string]['response']
-      | Functions[string]['error'] = await deserialize(data);
-
-    if (typeof parsed !== 'object' || parsed === null) {
-      return;
-    }
-
-    if ('err' in parsed) {
-      const { message, code, data, mid: messageID } = parsed;
-
-      const error = Object.assign(new Error(message), { code, data });
-
-      if (state.waitingForResponse.has(messageID)) {
-        const notify = state.waitingForResponse.get(messageID)!;
-        state.waitingForResponse.delete(messageID);
-        notify(Promise.reject(error));
-      }
-    } else if ('mt' in parsed) {
-      const { mid: messageID, data } = parsed as Functions[string]['response'];
-
-      if (state.waitingForResponse.has(messageID)) {
-        const notify = state.waitingForResponse.get(messageID)!;
-        state.waitingForResponse.delete(messageID);
-        notify(Promise.resolve(data));
-      }
-    } else if ('ev' in parsed) {
-      const { ev: eventType, data } = parsed;
-      const handlers = state.eventHandlers.get(eventType) ?? [];
-
-      for (const handler of handlers) {
-        if (handler.once) {
-          state.eventHandlers.get(eventType)!.delete(handler);
-        }
-
-        // TODO: error handling
-        handler(data);
-      }
-    }
-  };
 
   on('message', messageHandler);
 
@@ -458,90 +465,124 @@ function setupClient<
   // TODO: connection errors
   // TODO: connection closing events
 
-  const client = new Proxy<Connection<Functions, Events>>({} as any, {
+  type WaitingForResponse = (res: Promise<Functions[string]['response']['data']>) => void;
+
+  // client state
+  const waitingForResponse = new Map<string, WaitingForResponse>();
+  const eventHandling = setupEventHandling(eventValidation, shouldValidate);
+
+  async function messageHandler({ data }: { data: Serialized }) {
+    const parsed:
+      | Events[string]
+      | Functions[string]['request']
+      | Functions[string]['response']
+      | Functions[string]['error'] = await deserialize(data);
+
+    if (typeof parsed !== 'object' || parsed === null) {
+      return;
+    }
+
+    if ('err' in parsed) {
+      const { message, code, data, mid: messageID } = parsed;
+      const error = Object.assign(new Error(message), { code, data });
+      const respond = waitingForResponse.get(messageID);
+
+      waitingForResponse.delete(messageID);
+
+      if (respond) {
+        respond(Promise.reject(error));
+      }
+    } else if ('mt' in parsed) {
+      const { mt, mid: messageID, data } = parsed as Functions[string]['response'];
+      const respond = waitingForResponse.get(messageID);
+
+      waitingForResponse.delete(messageID);
+
+      if (shouldValidate && functionValidation[mt] && respond) {
+        const error = functionValidation[mt];
+
+        if (error) {
+          respond(Promise.reject(error));
+          return;
+        }
+      }
+
+      if (respond) {
+        respond(Promise.resolve(data));
+      }
+    } else if ('ev' in parsed) {
+      eventHandling.dispatch(parsed);
+    }
+  }
+
+  return new Proxy<Connection<Functions, Events>>({} as any, {
     get(_, prop) {
       switch (prop) {
         case 'on':
-          return (
-            name: string,
-            callback: (data: Events[string]['data']) => void,
-          ): CancelEventListener => {
-            if (!state.eventHandlers.has(name)) {
-              state.eventHandlers.set(name, new Set());
-            }
-
-            state.eventHandlers.get(name)!.add(callback);
-
-            return () => client.off(name, callback);
-          };
-
         case 'once':
-          return (
-            name: string,
-            callback: (data: Events[string]['data']) => void,
-          ): CancelEventListener => {
-            client.on(name, Object.assign(callback, { once: true }));
-
-            return () => client.off(name, callback);
-          };
-
+        case 'one':
         case 'off':
-          return (name: string, callback?: (data: Events[string]['data']) => void) => {
-            if (callback) {
-              state.eventHandlers.get(name)?.delete(callback);
-            } else {
-              state.eventHandlers.get(name)?.clear();
-            }
-          };
+          return eventHandling[prop];
 
         case 'sendEvent':
           return async (name: string, data: Events[string]['data']) => {
+            if (shouldValidate && eventValidation[name]) {
+              const error = eventValidation[name](data);
+
+              if (error) {
+                throw error;
+              }
+            }
+
             conn.send(await serialize({ ev: name, data }));
           };
 
         case 'close':
           return async () => {
             // TODO: wait for events to propogate
-            conn.close();
             // TODO: wait until connection is closed
+            conn.close();
           };
 
         case 'then':
           return undefined;
 
-        case 'ping':
-        default:
+        case 'ping': // ping is just a builtin function type
+        default: {
+          if (typeof prop !== 'string') return undefined;
+
           // all function calls go through here, it's why we set up a Proxy
           return async (data: unknown, timeoutMS: number = 15000) => {
             const message = { mt: prop, data, mid: nanoid() };
 
+            if (shouldValidate && functionValidation[prop]) {
+              const error = functionValidation[prop](data);
+
+              if (error) {
+                throw error;
+              }
+            }
+
             const response = new Promise((resolve, reject) => {
-              state.waitingForResponse.set(message.mid, (response) =>
-                response.then(resolve, reject),
-              );
+              waitingForResponse.set(message.mid, (response) => response.then(resolve, reject));
             });
 
             conn.send(await serialize(message));
 
-            const timeout = new Promise<void>((_, reject) =>
-              setTimeout(() => {
-                state.waitingForResponse.delete(message.mid);
-
-                reject(
-                  new Error(
-                    `Call to '${prop.toString()}' failed because it timed out in ${timeoutMS}ms`,
-                  ),
-                );
-              }, timeoutMS),
+            const [timeout, timeoutId] = createTimeout(
+              timeoutMS,
+              new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
             );
 
-            return Promise.race([response, timeout]);
+            return Promise.race([response, timeout]).finally(() => {
+              waitingForResponse.delete(message.mid);
+              clearTimeout(timeoutId);
+            });
           };
+        }
       }
     },
   });
-
-  return client;
 }
 
 function setupServer<
@@ -551,23 +592,16 @@ function setupServer<
   conn: WebSocketServer,
   handlers: FunctionHandlers<Functions>,
   { deserialize, serialize }: DataSerialization<any>,
+  functionValidation: { [k: string]: ValidationFunction<any> },
+  eventValidation: { [k: string]: ValidationFunction<any> },
+  shouldValidate: boolean,
 ): Connection<Functions, Events> {
   if ('binaryType' in conn) {
     conn.binaryType = 'arraybuffer';
   }
 
-  type EventHandler = {
-    once?: boolean;
-    (res: Events[string]['data']): void;
-  };
-
-  interface State {
-    eventHandlers: Map<keyof Events, Set<EventHandler>>;
-  }
-
-  const state: State = {
-    eventHandlers: new Map(),
-  };
+  // server state
+  const eventHandling = setupEventHandling(eventValidation, shouldValidate);
 
   let on: WebSocketServerInner<'on', never>['on'];
   let off: WebSocketServerInner<never, 'off'>['off'];
@@ -585,128 +619,108 @@ function setupServer<
     throw new Error('WebSocketServer did not have event bindings');
   }
 
-  const messageHandler = (conn: WebSocketClient) => async ({ data }: { data: Serialized }) => {
-    const parsed:
-      | Events[string]
-      | Functions[string]['request']
-      | Functions[string]['response']
-      | Functions[string]['error'] = await deserialize(data);
-
-    if (typeof parsed !== 'object' || parsed === null) {
-      return;
-    }
-
-    if ('err' in parsed) {
-      const { message, code, data, mid: messageID } = parsed;
-      const error = Object.assign(new Error(message), { code, data });
-
-      // TODO: I think we just ignore these? Client shouldn't send errors.
-    } else if ('mt' in parsed) {
-      const { mt, mid, data } = parsed;
-
-      if (mt === 'ping') {
-        conn.send(await serialize({ mt, mid }));
-
-        return;
-      }
-
-      if (!handlers[mt]) {
-        conn.send(
-          await serialize({
-            mid,
-            err: true,
-            message: `Server had no registered handler for function '${mt}'`,
-          }),
-        );
-
-        return;
-      }
-
-      await handlers[mt](data).then(
-        async (response) => {
-          conn.send(await serialize({ mt, mid, data: response }));
-        },
-        async (error) => {
-          conn.send(await serialize({ mid, err: true, message: error.message }));
-        },
-      );
-    } else if ('ev' in parsed) {
-      const { ev: eventType, data } = parsed;
-      const handlers = state.eventHandlers.get(eventType) ?? [];
-
-      for (const handler of handlers) {
-        // TODO: error handling
-        handler(data);
-      }
-    }
-  };
-
   const activeConnections = new Set<WebSocketClient>();
 
   on('connection', (client) => {
     activeConnections.add(client);
+    client.addEventListener('close', () => activeConnections.delete(client));
     client.addEventListener('message', messageHandler(client));
-
-    client.addEventListener('close', () => {
-      activeConnections.delete(client);
-    });
   });
 
   // TODO: connection errors
   // TODO: connection closing events
 
-  const server = new Proxy<Connection<Functions, Events>>({} as any, {
+  function messageHandler(client: WebSocketClient) {
+    return async ({ data }: { data: Serialized }) => {
+      const parsed:
+        | Events[string]
+        | Functions[string]['request']
+        | Functions[string]['response']
+        | Functions[string]['error'] = await deserialize(data);
+
+      if (typeof parsed !== 'object' || parsed === null) {
+        return;
+      }
+
+      if ('err' in parsed) {
+        // TODO: I think we just ignore these? We shouldn't be receiving errors from clients.
+      } else if ('ev' in parsed) {
+        eventHandling.dispatch(parsed);
+      } else if ('mt' in parsed) {
+        const { mt, mid, data } = parsed;
+
+        if (mt === 'ping') {
+          client.send(await serialize({ mt, mid }));
+
+          return;
+        }
+
+        if (!handlers[mt]) {
+          client.send(
+            await serialize({
+              mid,
+              err: true,
+              message: `Server had no registered handler for function '${mt}'`,
+            }),
+          );
+
+          return;
+        }
+
+        if (shouldValidate && functionValidation[mt]) {
+          const error = functionValidation[mt](data);
+
+          if (error) {
+            client.send(
+              await serialize({ mid, err: true, message: error.message, code: error.code }),
+            );
+
+            return;
+          }
+        }
+
+        await handlers[mt](data).then(
+          async (response) => {
+            client.send(await serialize({ mt, mid, data: response }));
+          },
+          async (error) => {
+            client.send(
+              await serialize({ mid, err: true, message: error.message, code: error.code }),
+            );
+          },
+        );
+      }
+    };
+  }
+
+  return new Proxy<Connection<Functions, Events>>({} as any, {
     get(_, prop) {
       switch (prop) {
         case 'on':
-          return (
-            name: string,
-            callback: (data: Events[string]['data']) => void,
-          ): CancelEventListener => {
-            if (!state.eventHandlers.has(name)) {
-              state.eventHandlers.set(name, new Set());
-            }
-
-            state.eventHandlers.get(name)!.add(callback);
-
-            return () => server.off(name, callback);
-          };
-
         case 'once':
-          return (
-            name: string,
-            callback: (data: Events[string]['data']) => void,
-          ): CancelEventListener => {
-            server.on(name, Object.assign(callback, { once: true }));
-
-            return () => server.off(name, callback);
-          };
-
+        case 'one':
         case 'off':
-          return (name: string, callback?: (data: Events[string]['data']) => void) => {
-            if (callback) {
-              state.eventHandlers.get(name)?.delete(callback);
-            } else {
-              state.eventHandlers.get(name)?.clear();
-            }
-          };
+          return eventHandling[prop];
 
         case 'sendEvent':
           return async (name: string, data: Events[string]['data']) => {
+            if (shouldValidate && eventValidation[name]) {
+              const error = eventValidation[name](data);
+
+              if (error) {
+                throw error;
+              }
+            }
+
             const message = await serialize({ ev: name, data });
 
             for (const conn of activeConnections) {
               try {
                 conn.send(message);
-              } catch {}
+              } catch {
+                // TODO
+              }
             }
-          };
-
-        case 'close':
-          return async () => {
-            // TODO: wait for events to propogate
-            conn.close();
-            // TODO: wait until connection is closed
           };
 
         case 'ping':
@@ -716,17 +730,127 @@ function setupServer<
             }
           };
 
+        case 'close':
+          return async () => {
+            // TODO: wait for events to propogate
+            // TODO: wait until connection is closed
+            conn.close();
+          };
+
         case 'then':
           return undefined;
 
-        default:
-          // a server can call itself
-          return handlers[prop as keyof Functions];
+        default: {
+          if (typeof prop !== 'string') return undefined;
+
+          // a server calls itself
+          const handler = handlers[prop as keyof Functions];
+
+          return async (data: unknown, timeoutMS: number = 15000) => {
+            if (shouldValidate && functionValidation[prop]) {
+              const error = functionValidation[prop](data);
+
+              if (error) {
+                throw error;
+              }
+            }
+
+            const response = handler(data);
+
+            const [timeout, timeoutId] = createTimeout(
+              timeoutMS,
+              new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
+            );
+
+            return Promise.race([response, timeout]).finally(() => {
+              clearTimeout(timeoutId);
+            });
+          };
+        }
       }
     },
   });
+}
 
-  return server;
+interface EventHandler<Events extends EventVariants<string>> {
+  once?: boolean;
+  (res: Events[string]['data']): void;
+}
+
+function setupEventHandling<Events extends EventVariants<string>>(
+  eventValidation: { [k: string]: ValidationFunction<any> },
+  shouldValidate: boolean,
+) {
+  const eventHandlers = new Map<keyof Events, Set<EventHandler<Events>>>();
+
+  function dispatch(parsed: Events[string]) {
+    const { ev: eventType, data } = parsed;
+    const handlers = eventHandlers.get(eventType) ?? [];
+
+    if (shouldValidate && eventValidation[eventType]) {
+      const error = eventValidation[eventType](data);
+
+      if (error) {
+        // TODO
+      }
+    }
+
+    for (const handler of handlers) {
+      // TODO: error handling
+      handler(data);
+    }
+  }
+
+  function on(name: string, callback: (data: Events[string]['data']) => void): CancelEventListener {
+    if (!eventHandlers.has(name)) {
+      eventHandlers.set(name, new Set());
+    }
+
+    eventHandlers.get(name)!.add(callback);
+
+    return () => off(name, callback);
+  }
+
+  function once(
+    name: string,
+    callback: (data: Events[string]['data']) => void,
+  ): CancelEventListener {
+    on(name, Object.assign(callback, { once: true }));
+
+    return () => off(name, callback);
+  }
+
+  function one(name: string) {
+    return new Promise((resolve) => once(name, resolve));
+  }
+
+  function off(name: string, callback?: (data: Events[string]['data']) => void) {
+    if (callback) {
+      eventHandlers.get(name)?.delete(callback);
+    } else {
+      eventHandlers.get(name)?.clear();
+    }
+  }
+
+  return {
+    on,
+    once,
+    one,
+    off,
+    dispatch,
+  };
+}
+
+function createTimeout(ms: number, error: Error): [Promise<void>, NodeJS.Timeout] {
+  let timeoutId: NodeJS.Timeout;
+
+  const promise = new Promise<void>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(error);
+    }, ms);
+  });
+
+  return [promise, timeoutId!];
 }
 
 // ts assertions

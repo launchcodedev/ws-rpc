@@ -5,10 +5,11 @@ import bsonSerialization from './bson';
 const setupClientAndServer = async <B extends Builder<any>>(
   builder: B,
   handlers: B['FunctionHandlers'],
+  shouldValidate?: boolean,
 ): Promise<[B['Connection'], B['Connection']]> => {
   const port = await getPort();
-  const server = await builder.server(handlers).listen(port);
-  const client = await builder.client().connect(port);
+  const server = await builder.server(handlers, shouldValidate).listen(port);
+  const client = await builder.client(shouldValidate).connect(port);
 
   return [client, server];
 };
@@ -45,16 +46,80 @@ describe('server & client connection', () => {
     const [client, server] = await setupClientAndServer(common, {});
 
     try {
-      expect.assertions(2);
-
-      client.on('test', (data) => expect(data).toBeUndefined());
-      server.on('test', (data) => expect(data).toBeUndefined());
+      const clientReceive = client.one('test');
+      const serverReceive = server.one('test');
 
       await client.sendEvent('test');
       await server.sendEvent('test');
 
-      // TODO: close() should finish propagation
-      await delay(10);
+      await expect(clientReceive).resolves.toBeUndefined();
+      await expect(serverReceive).resolves.toBeUndefined();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+});
+
+describe('validation', () => {
+  it('validates a basic event', async () => {
+    const common = build(jsonSerialization).event<'test'>(
+      'test',
+      () => new Error('Validation Error'),
+    );
+
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      await expect(client.sendEvent('test')).rejects.toThrow();
+      await expect(server.sendEvent('test')).rejects.toThrow();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it("does't validate events when passed shouldValidate = false", async () => {
+    const common = build(jsonSerialization).event<'test'>(
+      'test',
+      () => new Error('Validation Error'),
+    );
+
+    const [client, server] = await setupClientAndServer(common, {}, false);
+
+    try {
+      await client.sendEvent('test');
+      await server.sendEvent('test');
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it('validates a basic function', async () => {
+    const common = build(jsonSerialization).func<'test'>(
+      'test',
+      () => new Error('Validation Error'),
+    );
+
+    const [client, server] = await setupClientAndServer(common, { async test() {} });
+
+    try {
+      await expect(client.test()).rejects.toThrow();
+      await expect(server.test()).rejects.toThrow();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it("does't validate function when passed shouldValidate = false", async () => {
+    const common = build(jsonSerialization).func<'test'>(
+      'test',
+      () => new Error('Validation Error'),
+    );
+
+    const [client, server] = await setupClientAndServer(common, { async test() {} }, false);
+
+    try {
+      await client.test();
+      await server.test();
     } finally {
       await Promise.all([client.close(), server.close()]);
     }
@@ -78,8 +143,6 @@ describe('error conditions', () => {
     }
   });
 });
-
-describe('reconnecting-websocket', () => {});
 
 describe('custom serialization formats', () => {
   it('uses bson format to serialize Dates', async () => {
@@ -112,3 +175,5 @@ describe('custom serialization formats', () => {
     }
   });
 });
+
+describe('reconnecting-websocket', () => {});

@@ -28,6 +28,14 @@
     "test": "jest",
     "prepublishOnly": "yarn clean && yarn build && yarn build:es"
   },
+  "dependencies": {
+    "@types/bson": "4",
+    "@types/ws": "7",
+    "bson": "4",
+    "nanoid": "3",
+    "reconnecting-websocket": "4",
+    "ws": "7"
+  },
   "devDependencies": {
     "@commitlint/cli": "8",
     "@lcdev/commitlint": "1",
@@ -62,13 +70,5 @@
     "extends": [
       "@lcdev/commitlint"
     ]
-  },
-  "dependencies": {
-    "@types/bson": "4",
-    "@types/ws": "7",
-    "bson": "4",
-    "nanoid": "3",
-    "reconnecting-websocket": "4",
-    "ws": "7"
   }
 }
