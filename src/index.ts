@@ -5,6 +5,8 @@ import type { Server as HttpsServer } from 'https';
 import type { Json } from '@lcdev/ts';
 import { nanoid } from 'nanoid';
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 export type FunctionName = string;
 export type EventName = string;
 
@@ -293,40 +295,35 @@ export type Builder<
 export function build<Serializable>(
   serializer: DataSerialization<Serializable>,
 ): Builder<Serializable> {
-  return buildInner(serializer, {}, {});
+  return buildInner({}, {});
 
   function buildInner<Serializable>(
-    serializer: DataSerialization<Serializable>,
     functionValidation: { [k: string]: ValidationFunction<Serializable> },
     eventValidation: { [k: string]: ValidationFunction<Serializable> },
   ): Builder<Serializable> {
     return {
-      // Associated types
-      Client: undefined as any,
-      Server: undefined as any,
-      Connection: undefined as any,
-      Functions: undefined as any,
-      Events: undefined as any,
-      FunctionHandlers: undefined as any,
+      // Associated types, only for Typescript
+      Client: (undefined as unknown) as Builder<Serializable>['Client'],
+      Server: (undefined as unknown) as Builder<Serializable>['Server'],
+      Connection: (undefined as unknown) as Builder<Serializable>['Connection'],
+      Functions: (undefined as unknown) as Builder<Serializable>['Functions'],
+      Events: (undefined as unknown) as Builder<Serializable>['Events'],
+      FunctionHandlers: (undefined as unknown) as Builder<Serializable>['FunctionHandlers'],
 
       func(name?: string, validation?: ValidationFunction<Serializable>) {
         if (!name || !validation) {
-          return buildInner(serializer, functionValidation, eventValidation);
+          return buildInner(functionValidation, eventValidation);
         }
 
-        return buildInner(
-          serializer,
-          { ...functionValidation, [name]: validation },
-          eventValidation,
-        );
+        return buildInner({ ...functionValidation, [name]: validation }, eventValidation);
       },
 
       event(name?: string, validation?: ValidationFunction<Serializable>) {
         if (!name || !validation) {
-          return buildInner(serializer, functionValidation, eventValidation);
+          return buildInner(functionValidation, eventValidation);
         }
 
-        return buildInner(serializer, functionValidation, {
+        return buildInner(functionValidation, {
           ...eventValidation,
           [name]: validation,
         });
@@ -475,17 +472,19 @@ function setupClient<
   const waitingForResponse = new Map<string, WaitingForResponse>();
   const eventHandling = setupEventHandling(eventValidation, shouldValidate);
 
-  async function messageHandler({ data }: { data: Serialized }) {
-    if (data === 'ping') {
+  async function messageHandler({ data: msg }: { data: Serialized }) {
+    if (msg === 'ping') {
       conn.send('pong');
       return;
     }
 
-    const parsed:
+    type Parsed =
       | Events[string]
       | Functions[string]['request']
       | Functions[string]['response']
-      | Functions[string]['error'] = await deserialize(data);
+      | Functions[string]['error'];
+
+    const parsed = (await deserialize(msg)) as Parsed;
 
     if (typeof parsed !== 'object' || parsed === null) {
       return;
@@ -579,7 +578,7 @@ function setupClient<
             }
 
             const response = new Promise((resolve, reject) => {
-              waitingForResponse.set(message.mid, (response) => response.then(resolve, reject));
+              waitingForResponse.set(message.mid, (respond) => respond.then(resolve, reject));
             });
 
             conn.send(await serialize(message));
@@ -647,8 +646,8 @@ function setupServer<
   const incomingPongListeners = new Set<(client: WebSocketClient) => void>();
 
   function messageHandler(client: WebSocketClient) {
-    return async ({ data }: { data: Serialized }) => {
-      if (data === 'pong') {
+    return async ({ data: msg }: { data: Serialized }) => {
+      if (msg === 'pong') {
         for (const notify of incomingPongListeners) {
           notify(client);
         }
@@ -656,11 +655,13 @@ function setupServer<
         return;
       }
 
-      const parsed:
+      type Parsed =
         | Events[string]
         | Functions[string]['request']
         | Functions[string]['response']
-        | Functions[string]['error'] = await deserialize(data);
+        | Functions[string]['error'];
+
+      const parsed = (await deserialize(msg)) as Parsed;
 
       if (typeof parsed !== 'object' || parsed === null) {
         return;
@@ -707,7 +708,7 @@ function setupServer<
           async (response) => {
             client.send(await serialize({ mt, mid, data: response }));
           },
-          async (error) => {
+          async (error: Error & { code?: number | string }) => {
             client.send(
               await serialize({ mid, err: true, message: error.message, code: error.code }),
             );
@@ -738,9 +739,9 @@ function setupServer<
 
             const message = await serialize({ ev: name, data });
 
-            for (const conn of activeConnections) {
+            for (const client of activeConnections) {
               try {
-                conn.send(message);
+                client.send(message);
               } catch {
                 // TODO
               }
@@ -751,8 +752,8 @@ function setupServer<
           return async (timeoutMS: number = 200) => {
             const waitingFor = new Set(activeConnections);
 
-            for (const conn of waitingFor) {
-              conn.send('ping');
+            for (const client of waitingFor) {
+              client.send('ping');
             }
 
             const waitForPongs = new Promise<void>((resolve) => {
@@ -905,7 +906,8 @@ function createTimeout(ms: number, error: Error): [Promise<void>, () => void] {
   ];
 }
 
-// ts assertions
+// ts assertions to ensure compatibility
+/* eslint-disable */
 
 const _test1: WebSocketClient = (null as any) as WS;
 const _test2: WebSocketClient = (null as any) as WebSocket;

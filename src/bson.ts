@@ -1,6 +1,7 @@
 import { serialize as serializeBSON, deserialize as deserializeBSON } from 'bson';
 import { DataSerialization } from './index';
 
+/* eslint-disable @typescript-eslint/no-unsafe-return */
 const serialization: DataSerialization<any> = {
   serialize(data) {
     return serializeBSON(data);
