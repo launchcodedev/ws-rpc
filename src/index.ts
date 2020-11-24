@@ -124,6 +124,7 @@ export type FunctionHandlers<Functions extends FunctionVariants<FunctionName>> =
 /** Common interface for websocket client (Browser, Node, etc), to avoid hard dependency on ws library */
 export interface WebSocketClient {
   binaryType?: string;
+  readyState: number;
 
   addEventListener: {
     (method: 'open', cb: (event: {}) => void): void;
@@ -174,7 +175,7 @@ export type Connection<
   Events extends EventVariants<EventName>
 > = EventHandlers<Events> &
   FunctionHandlers<Functions> & {
-    ping(): Promise<void>;
+    ping(timeoutMS?: number): Promise<void>;
     close(): Promise<void>;
   };
 
@@ -472,6 +473,11 @@ function setupClient<
   const eventHandling = setupEventHandling(eventValidation, shouldValidate);
 
   async function messageHandler({ data }: { data: Serialized }) {
+    if (data === 'ping') {
+      conn.send('pong');
+      return;
+    }
+
     const parsed:
       | Events[string]
       | Functions[string]['request']
@@ -555,6 +561,12 @@ function setupClient<
           return async (data: unknown, timeoutMS: number = 15000) => {
             const message = { mt: prop, data, mid: nanoid() };
 
+            if (prop === 'ping') {
+              // ping(timeoutMS)
+              timeoutMS = (data as number) ?? 500;
+              data = undefined;
+            }
+
             if (shouldValidate && functionValidation[prop]) {
               const error = functionValidation[prop](data);
 
@@ -629,9 +641,18 @@ function setupServer<
 
   // TODO: connection errors
   // TODO: connection closing events
+  const incomingPongListeners = new Set<(client: WebSocketClient) => void>();
 
   function messageHandler(client: WebSocketClient) {
     return async ({ data }: { data: Serialized }) => {
+      if (data === 'pong') {
+        for (const notify of incomingPongListeners) {
+          notify(client);
+        }
+
+        return;
+      }
+
       const parsed:
         | Events[string]
         | Functions[string]['request']
@@ -724,10 +745,32 @@ function setupServer<
           };
 
         case 'ping':
-          return async () => {
-            for (const conn of activeConnections) {
-              conn.send('"ping"');
+          return async (timeoutMS: number = 200) => {
+            const waitingFor = new Set(activeConnections);
+
+            for (const conn of waitingFor) {
+              conn.send('ping');
             }
+
+            const waitForPongs = new Promise<void>((resolve) => {
+              const listenForPongs = (client: WebSocketClient) => {
+                waitingFor.delete(client);
+
+                if (waitingFor.size === 0) {
+                  incomingPongListeners.delete(listenForPongs);
+                  resolve();
+                }
+              };
+
+              incomingPongListeners.add(listenForPongs);
+            });
+
+            const [timeout, timeoutId] = createTimeout(
+              timeoutMS,
+              new Error(`Pinging all clients exceeded timeout ${timeoutMS}ms`),
+            );
+
+            await Promise.race([waitForPongs, timeout]).finally(() => clearTimeout(timeoutId));
           };
 
         case 'close':

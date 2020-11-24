@@ -58,6 +58,66 @@ describe('server & client connection', () => {
       await Promise.all([client.close(), server.close()]);
     }
   });
+
+  it('removes all event listeners by name', async () => {
+    const common = build(jsonSerialization).event<'test', 'data'>();
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      expect.assertions(10); // 5 events x 2 listeners
+
+      client.on('test', (data) => expect(data).toBe('data'));
+      client.on('test', (data) => expect(data).toBe('data'));
+
+      for (const _ of new Array(5).fill(0)) {
+        await server.sendEvent('test', 'data');
+      }
+
+      // wait for events to have been received
+      await client.one('test');
+
+      // after 'off', should have no event listeners
+      client.off('test');
+
+      await server.sendEvent('test', 'data');
+      await server.sendEvent('test', 'data');
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it('removes all event listeners by callback', async () => {
+    const common = build(jsonSerialization).event<'test', 'data'>();
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      expect.assertions(12); // 5 x 2 events + 2 events
+
+      const callback1 = (data: 'data') => expect(data).toBe('data');
+      const callback2 = (data: 'data') => expect(data).toBe('data');
+
+      client.on('test', callback1);
+      client.on('test', callback2);
+
+      for (const _ of new Array(5).fill(0)) {
+        await server.sendEvent('test', 'data');
+      }
+
+      // wait for events to have been received
+      await client.one('test');
+
+      // turn off callback1, callback2 should still be alive
+      client.off('test', callback1);
+
+      await server.sendEvent('test', 'data');
+      await server.sendEvent('test', 'data');
+
+      // wait for events to have been received
+      await client.one('test');
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
 });
 
 describe('validation', () => {
@@ -138,6 +198,36 @@ describe('error conditions', () => {
     try {
       await expect(client.test(undefined, 10)).rejects.toThrow();
       await expect(client.test(undefined, 200)).resolves.toBeUndefined();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it('fails to send ping when server is closed', async () => {
+    const common = build(jsonSerialization);
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      await client.ping();
+      await server.close();
+
+      await expect(client.ping(10)).rejects.toThrow();
+      await expect(client.ping(10)).rejects.toThrow();
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it('fails to send ping when client is closed', async () => {
+    const common = build(jsonSerialization);
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      await server.ping();
+      await client.close();
+
+      await expect(server.ping(10)).rejects.toThrow();
+      await expect(server.ping(10)).rejects.toThrow();
     } finally {
       await Promise.all([client.close(), server.close()]);
     }
