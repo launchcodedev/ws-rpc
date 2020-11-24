@@ -6,99 +6,80 @@ and you can read all of the source code in 10 minutes. Don't build giant systems
 communication layers between software, usually in single-tenant systems.
 
 ```
-yarn add @lcdev/ws-rpc@VERSION
+yarn add @lcdev/ws-rpc
 ```
 
 ## Quickstart
 Normally, you'd have some shared code between server and client (backend and frontend). It would look like this:
 
 ```typescript
-import { Server as BaseServer, Client as BaseClient, MessageVariant, EventVariant } from '@lcdev/ws-rpc';
+import { build } from '@lcdev/ws-rpc';
 
-export enum MessageType {
-  Ping = 'Ping',
-  DoSomething = 'DoSomething',
-}
+// this is the definition of the API between client(s) and server
+const common = build({ deserialize: JSON.parse, serialize: JSON.stringify })
+  // functions are client -> server. input and outputs can be anything serializable.
+  .func<'double', { num: number }, { doubled: number }>()
+  .func<'triple', { num: number }, { tripled: number }>()
+  // events are bi-directional, they can be sent or received on both sides.
+  .event<'single'>()
+  .event<'random', { rand: number }>()
+  .event<'scheduled', { rand: number }>();
 
-export enum EventType {
-  SomethingInterestingHappened = 'SomethingInterestingHappened',
-}
+// normally in a different module, we can define our server
+common
+  .server({
+    async double({ num }) {
+      return { doubled: num * 2 };
+    },
+    async triple({ num }) {
+      return { tripled: num * 3 };
+    },
+  })
+  // you can pass a host, port, a WS.Server, http(s) server
+  .listen(3000)
+  .then((server) => {
+    setTimeout(() => {
+      server.sendEvent('single');
+    }, 500);
 
-export type Messages = {
-  [MessageType.Ping]: MessageVariant<MessageType.Ping, void, 'pong'>;
-  [MessageType.DoSomething]: MessageVariant<MessageType.DoSomething, { input: string }, { output: string }>;
-};
+    const runRandom = () => {
+      setTimeout(() => {
+        // IMPORTANTLY, TypeScript knows the type of all events
+        server.sendEvent('random', { rand: Math.random() });
 
-export type Events = {
-  [EventType.SomethingInterestingHappened]: EventVariant<EventType.SomethingInterestingHappened, { attachedData: string }>;
-};
+        runRandom();
+      }, Math.random() * 500);
+    };
 
-export class Client extends BaseClient<MessageType, EventType, Messages, Events> {}
-export class Server extends BaseServer<MessageType, EventType, Messages, Events> {}
+    runRandom();
+
+    setInterval(() => {
+      server.sendEvent('scheduled', { rand: Math.random() });
+    }, 500);
+  })
+  .catch(console.error);
+
+// normally in another module, we connect as a client
+common
+  .client()
+  .connect(3000)
+  .then((client) => {
+    client.on('single', () => {
+      console.log('received single');
+    });
+
+    client.on('random', ({ rand }) => {
+      console.log('received random', rand);
+    });
+
+    client.on('scheduled', ({ rand }) => {
+      console.log('received scheduled', rand);
+    });
+
+    // just call functions like you would call a normal function
+    // TypeScript also knows the type of all functions
+    client.double({ num: 2 }).then(({ doubled }) => console.log('doubled to', doubled));
+    client.triple({ num: 2 }).then(({ tripled }) => console.log('tripled to', tripled));
+  })
+  .catch(console.error);
 ```
-
-Now you have a `Client` and `Server`, who know how to talk to each other.
-
-On the server side, you'd register function handlers and listen for events.
-
-```typescript
-const server = new Server(port);
-
-server.registerHandler(MessageType.Ping, () => {
-  return 'pong';
-});
-
-server.registerHandler(MessageType.DoSomething, ({ input }) => {
-  return { output: 'out' + input };
-});
-```
-
-On the client side, you can call those functions.
-
-
-```typescript
-const client = new Client('localhost', port);
-
-const pong = await client.call(MessageType.Ping, undefined);
-const something = await client.call(MessageType.DoSomething, { input: 'in' });
-```
-
-Most importantly, this is **type safe**. Function calls and handlers are constrained by typescript and the types you've given.
-
-### Events
-Both servers and clients can send or receive 'events'. These are assumed to be bidirectional - they could be sent either direction.
-
-```typescript
-server.on(EventType.SomethingInterestingHappened, ({ attachedData }) => {
-  console.log(`Something happened! ${attachedData}`)
-});
-
-await client.sendEvent(EventType.SomethingInterestingHappened, { attachedData: 'foobar' });
-```
-
-Both sides can send, or receive events.
-
-### Binary Messages
-This package has built-in support for using [BSON](https://www.npmjs.com/package/bson).
-This is optional. You don't pay for it, if you don't use it (`bson` adds roughly 20kb to your web bundle).
-
-Just replace `Client` and `Server` with imports:
-
-```typescript
-import { Client, Server } from '@lcdev/ws-rpc/bson';
-```
-
-This will give you the ability to encode any JS object (Date, Buffer, etc.) without any extra work on your part.
-Note that the types are a little less contrained because of this, and in particular, you might run into difficulty
-between nodejs and browser with `Buffer` vs `Blob` vs `ArrayBuffer`. Test out code in the different environments to be sure.
-
-### Reconnecting / Fault Tolerance
-This package will accept any WebSocket implementation for clients.
-
-```typescript
-import ReconnectingWS from 'reconnecting-websocket';
-
-const client = new Client(new ReconnectingWS('ws://localhost:8989'));
-```
-
-Ensure that the WS is spec compliant.
