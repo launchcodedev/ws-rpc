@@ -124,7 +124,7 @@ export type FunctionHandlers<Functions extends FunctionVariants<FunctionName>> =
   [F in keyof Functions]: FunctionHandler<Functions[F]>;
 };
 
-/** Common interface for websocket client (Browser, Node, etc), to avoid hard dependency on ws library */
+/** Common interface for websocket client (Browser, Node, etc), to avoid hard dependency on 'ws' library */
 export interface WebSocketClient {
   binaryType?: string;
   readyState: number;
@@ -147,7 +147,7 @@ export interface WebSocketClient {
   close(): void;
 }
 
-/** Common interface for websocket server, to avoid hard dependency on ws library */
+/** Common interface for websocket server, to avoid hard dependency on 'ws' library */
 export type WebSocketServer =
   | WebSocketServerInner<'addListener', 'removeListener'>
   | WebSocketServerInner<'addEventListener', 'removeEventListener'>
@@ -172,7 +172,7 @@ type WebSocketServerInner<AddListener extends string, RemoveListener extends str
     };
   };
 
-/** Common bidirectional type of a connected client or server - servers call their own functions */
+/** Common bidirectional type of a connected client or server (servers will call their own functions) */
 export type Connection<
   Functions extends FunctionVariants<FunctionName>,
   Events extends EventVariants<EventName>
@@ -212,7 +212,7 @@ export interface DataSerialization<Serializable> {
   deserialize(data: Serialized): Serializable | Promise<Serializable>;
 }
 
-/** Basic JSON wire format */
+/** Basic JSON wire format (de)serialization */
 export const jsonSerialization: DataSerialization<Json> = {
   serialize: JSON.stringify,
   deserialize: JSON.parse,
@@ -221,7 +221,7 @@ export const jsonSerialization: DataSerialization<Json> = {
 /** Function that validates incoming or outgoing data */
 export type ValidationFunction<Data> = (data: Data) => (Error & { code?: number | string }) | false;
 
-/** Builder for Client/Server pair */
+/** Common isomorphic builder type for a Client/Server pair */
 export type Builder<
   Serializable,
   Functions extends FunctionVariants<FunctionName, Serializable> = FunctionVariants<
@@ -230,7 +230,7 @@ export type Builder<
   >,
   Events extends EventVariants<EventName, Serializable> = EventVariants<never, Serializable>
 > = {
-  /** Adds a function type that can be called */
+  /** Adds a function type that can be called. Request validation is optional. */
   func: {
     <
       Name extends FunctionName = never,
@@ -256,7 +256,7 @@ export type Builder<
     >;
   };
 
-  /** Adds an event type that can be triggered from either side */
+  /** Adds an event type that can be triggered from either side. Data validation is optional. */
   event: {
     <Name extends EventName = never, Data extends Serializable | void = void>(): Builder<
       Serializable,
@@ -272,6 +272,7 @@ export type Builder<
 
   /** Create a client with the built up types */
   client(shouldValidate?: boolean): Client<Functions, Events>;
+
   /** Create a server with the built up types */
   server(
     handlers: FunctionHandlers<Functions>,
@@ -316,12 +317,24 @@ export function build<Serializable>(
           return buildInner(functionValidation, eventValidation);
         }
 
+        if (functionValidation[name]) {
+          throw new Error(
+            `Tried to call func() with validation, but a function named ${name} already exists.`,
+          );
+        }
+
         return buildInner({ ...functionValidation, [name]: validation }, eventValidation);
       },
 
       event(name?: string, validation?: ValidationFunction<Serializable>) {
         if (!name || !validation) {
           return buildInner(functionValidation, eventValidation);
+        }
+
+        if (eventValidation[name]) {
+          throw new Error(
+            `Tried to call event() with validation, but an event named ${name} already exists.`,
+          );
         }
 
         return buildInner(functionValidation, {
@@ -332,46 +345,39 @@ export function build<Serializable>(
 
       // build up a Client type that'll connect lazily
       client(shouldValidate = true) {
+        if (shouldValidate) {
+          logger.verbose(`Setting up a Client that should validate data`);
+        } else {
+          logger.verbose(`Setting up a Client that should not validate data`);
+        }
+
         async function connect(
           ...args: unknown[]
         ): Promise<Connection<FunctionVariants, EventVariants>> {
           let connection: WebSocketClient;
 
-          // resolve to the WebSocket client library - use the global and avoid 'ws' if possible
-          const getWebSocket = () => {
-            if (typeof globalThis !== 'undefined' && 'WebSocket' in globalThis) {
-              return Promise.resolve(globalThis.WebSocket);
-            }
-
-            if (typeof window !== 'undefined' && 'WebSocket' in window) {
-              return Promise.resolve(window.WebSocket);
-            }
-
-            if (typeof global !== 'undefined' && 'WebSocket' in global) {
-              return Promise.resolve(global.WebSocket);
-            }
-
-            return import('ws').then((ws) => ws.default);
-          };
-
-          // see the Client::connect function for overloads
+          // see the Client::connect function for all overload types
           if (typeof args[0] === 'number') {
             const [port, secure] = args as [number, boolean | undefined];
 
             return connect('127.0.0.1', port, secure);
           }
+
           if (typeof args[0] === 'string') {
             const [host, port, secure] = args as [string, number, boolean | undefined];
             const WebSocket = await getWebSocket();
 
             if (secure === true) {
+              logger.info(`Connecting to 'wss://${host}:${port}'`);
               connection = new WebSocket(`wss://${host}:${port}`);
             } else {
+              logger.info(`Connecting to 'ws://${host}:${port}'`);
               connection = new WebSocket(`ws://${host}:${port}`);
             }
           } else {
             const [client] = args as [WebSocketClient];
 
+            logger.info(`Connecting using a provided WebSocket`);
             connection = client;
           }
 
@@ -387,6 +393,8 @@ export function build<Serializable>(
 
           await Promise.race([connecting, timeout]).finally(clearTimeout);
 
+          logger.info(`WebSocket client connection opened`);
+
           return setupClient(
             connection,
             serializer,
@@ -401,8 +409,16 @@ export function build<Serializable>(
 
       // build up a Server type that'll listen lazily
       server(handlers, shouldValidate = true) {
+        if (shouldValidate) {
+          logger.verbose(`Setting up a Server that should validate data`);
+        } else {
+          logger.verbose(`Setting up a Server that should not validate data`);
+        }
+
         async function listen(...args: unknown[]) {
           let connection: WebSocketServer;
+
+          // we need the inner type, so that an explicit HTTP server is closed as well
           let inner: { close(cb: (err?: Error) => void): void } | undefined;
 
           // see the Server::listen function for overloads
@@ -410,24 +426,30 @@ export function build<Serializable>(
             const [port] = args as [number];
             const { Server: WebSocketServer } = await import('ws');
 
+            logger.info(`Creating a WebSocket server on localhost:${port}`);
             connection = new WebSocketServer({ port });
           } else if (typeof args[0] === 'string') {
             const [host, port] = args as [string, number];
             const { Server: WebSocketServer } = await import('ws');
 
+            logger.info(`Creating a WebSocket server on ${host}:${port}`);
             connection = new WebSocketServer({ host, port });
           } else if (args[0] instanceof (await import('http')).Server) {
             const { Server: WebSocketServer } = await import('ws');
 
-            [inner] = args as [HttpServer];
-            connection = new WebSocketServer({ server: args[0] });
+            logger.info(`Creating a WebSocket server with a HTTP server`);
+            const [server] = args as [HttpServer];
+            inner = server;
+            connection = new WebSocketServer({ server });
           } else if (args[0] instanceof (await import('https')).Server) {
             const { Server: WebSocketServer } = await import('ws');
 
-            [inner] = args as [HttpsServer];
-            connection = new WebSocketServer({ server: args[0] });
+            logger.info(`Creating a WebSocket server with a HTTPS server`);
+            const [server] = args as [HttpsServer];
+            inner = server;
+            connection = new WebSocketServer({ server });
           } else {
-            connection = args[0] as WebSocketServer;
+            [connection] = args as [WebSocketServer];
           }
 
           return setupServer(
@@ -467,6 +489,8 @@ function setupClient<
   on('message', messageHandler);
 
   on('open', () => {
+    logger.info(`Open event triggered: re-registering message handlers`);
+
     // re-register the message handler every 'open' event
     off('message', messageHandler);
     on('message', messageHandler);
@@ -481,6 +505,7 @@ function setupClient<
 
   async function messageHandler({ data: msg }: { data: Serialized }) {
     if (msg === 'ping') {
+      logger.verbose('Received a ping! Responding with pong.');
       conn.send('pong');
       return;
     }
@@ -561,6 +586,8 @@ function setupClient<
               }
             }
 
+            logger.verbose(`Sending an event '${name}'`);
+
             conn.send(await serialize({ ev: name, data }));
           };
 
@@ -568,6 +595,7 @@ function setupClient<
           return async () => {
             // TODO: wait for events to propogate and responses to come in
 
+            logger.verbose(`Closing connection`);
             conn.close();
           };
 
@@ -595,6 +623,8 @@ function setupClient<
                 throw error;
               }
             }
+
+            logger.verbose(`Calling remote function: ${prop} (messageID: ${message.mid})`);
 
             const response = new Promise((resolve, reject) => {
               waitingForResponse.set(message.mid, (respond) => respond.then(resolve, reject));
@@ -649,6 +679,8 @@ function setupServer<
   const activeConnections = new Set<WebSocketClient>();
 
   on('connection', (client) => {
+    logger.info(`A new client has connected!`);
+
     activeConnections.add(client);
     client.addEventListener('close', () => activeConnections.delete(client));
     client.addEventListener('message', messageHandler(client));
@@ -662,6 +694,8 @@ function setupServer<
   function messageHandler(client: WebSocketClient) {
     return async ({ data: msg }: { data: Serialized }) => {
       if (msg === 'pong') {
+        logger.verbose('Received a pong response!');
+
         for (const notify of incomingPongListeners) {
           notify(client);
         }
@@ -684,6 +718,7 @@ function setupServer<
       if ('err' in parsed) {
         logger.warn(`Received an 'err' message, which clients should not send.`);
       } else if ('ev' in parsed) {
+        logger.verbose(`Received a '${parsed.ev}' event`);
         eventHandling.dispatch(parsed);
       } else if ('mt' in parsed) {
         const { mt, mid, data } = parsed;
@@ -695,6 +730,8 @@ function setupServer<
         }
 
         if (!handlers[mt]) {
+          logger.error(`A function '${mt}' was attempted, but we had no valid handlers`);
+
           client.send(
             await serialize({
               mid,
@@ -718,6 +755,7 @@ function setupServer<
           }
         }
 
+        logger.verbose(`Function '${mt}' was called`);
         await handlers[mt](data).then(
           async (response) => {
             client.send(await serialize({ mt, mid, data: response }));
@@ -755,6 +793,8 @@ function setupServer<
               }
             }
 
+            logger.verbose(`Sending an event '${name}'`);
+
             const message = await serialize({ ev: name, data });
 
             for (const client of activeConnections) {
@@ -769,6 +809,8 @@ function setupServer<
         case 'ping':
           return async (timeoutMS: number = 200) => {
             const waitingFor = new Set(activeConnections);
+
+            logger.verbose(`Pinging ${waitingFor.size} connected clients`);
 
             for (const client of waitingFor) {
               client.send('ping');
@@ -798,6 +840,8 @@ function setupServer<
         case 'close':
           return async () => {
             // TODO: wait for events to propogate
+
+            logger.verbose(`Closing connection`);
             conn.close();
 
             if (inner) {
@@ -857,6 +901,10 @@ function setupConnectionEventHandling(on: {
 
   // TODO: track isClosed and react in function calls
   on('close', () => {
+    if (onClose.size === 0) {
+      logger.warn('Connection was closed');
+    }
+
     for (const callback of onClose) {
       callback();
     }
@@ -864,6 +912,10 @@ function setupConnectionEventHandling(on: {
 
   on('error', (error) => {
     const normalized = normalizeError(error);
+
+    if (onError.size === 0) {
+      logger.warn(`Connection error: ${normalized.toString()}`);
+    }
 
     for (const callback of onError) {
       callback(normalized);
@@ -984,6 +1036,23 @@ function normalizeError(error: any) {
   }
 
   return normalized;
+}
+
+// resolve to the WebSocket client library - use the global and avoid 'ws' if possible
+function getWebSocket() {
+  if (typeof globalThis !== 'undefined' && 'WebSocket' in globalThis) {
+    return Promise.resolve(globalThis.WebSocket);
+  }
+
+  if (typeof window !== 'undefined' && 'WebSocket' in window) {
+    return Promise.resolve(window.WebSocket);
+  }
+
+  if (typeof global !== 'undefined' && 'WebSocket' in global) {
+    return Promise.resolve(global.WebSocket);
+  }
+
+  return import('ws').then((ws) => ws.default);
 }
 
 // ts assertions to ensure compatibility

@@ -8,7 +8,7 @@ export enum LogLevel {
   None = 'none',
 }
 
-let logLevel: LogLevel = LogLevel.Warn;
+let logLevel: LogLevel = 'test' in globalThis ? LogLevel.Error : LogLevel.Warn;
 
 export const logger = {
   setLevel(level: LogLevel) {
