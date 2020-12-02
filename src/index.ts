@@ -4,8 +4,9 @@ import type { Server as HttpServer } from 'http';
 import type { Server as HttpsServer } from 'https';
 import type { Json } from '@lcdev/ts';
 import { nanoid } from 'nanoid';
+import { logger } from './logging';
 
-/* eslint-disable @typescript-eslint/no-unused-vars */
+export { LogLevel, setLogLevel } from './logging';
 
 export type FunctionName = string;
 export type EventName = string;
@@ -69,7 +70,7 @@ export type EventVariants<EventTypes extends EventName = never, Serializable = u
   [T in EventTypes]: EventVariant<T, Serializable, Serializable>;
 };
 
-// helper type
+// helper type for FunctionVariants
 type AddFunctionVariant<
   Name extends FunctionName,
   RequestData extends Serializable | void,
@@ -79,7 +80,7 @@ type AddFunctionVariant<
   [k in Name]: FunctionVariant<Name, RequestData, ResponseData, Serializable>;
 };
 
-// helper type
+// helper type for EventVariants
 type AddEventVariant<Name extends EventName, Data extends Serializable | void, Serializable> = {
   [k in Name]: EventVariant<Name, Data, Serializable>;
 };
@@ -178,11 +179,10 @@ export type Connection<
 > = EventHandlers<Events> &
   FunctionHandlers<Functions> & {
     ping(timeoutMS?: number): Promise<void>;
+    onError(cb: (error: Error) => void): CancelEventListener;
+    onClose(cb: () => void): CancelEventListener;
     close(): Promise<void>;
   };
-
-// TODO: sendEvent to specific clients
-// TODO: onClientConnect event
 
 /** Intermediate representation of a client type, that can connect to a server */
 export type Client<
@@ -218,6 +218,7 @@ export const jsonSerialization: DataSerialization<Json> = {
   deserialize: JSON.parse,
 };
 
+/** Function that validates incoming or outgoing data */
 export type ValidationFunction<Data> = (data: Data) => (Error & { code?: number | string }) | false;
 
 /** Builder for Client/Server pair */
@@ -374,11 +375,17 @@ export function build<Serializable>(
             connection = client;
           }
 
-          // TODO: connection timeouts
-          await new Promise<void>((resolve, reject) => {
+          const [timeout, clearTimeout] = createTimeout(
+            10000,
+            new Error('Connecting to WebSocket server timed out'),
+          );
+
+          const connecting = new Promise<void>((resolve, reject) => {
             connection.addEventListener('open', () => resolve());
             connection.addEventListener('error', (err) => reject(err));
           });
+
+          await Promise.race([connecting, timeout]).finally(clearTimeout);
 
           return setupClient(
             connection,
@@ -396,6 +403,7 @@ export function build<Serializable>(
       server(handlers, shouldValidate = true) {
         async function listen(...args: unknown[]) {
           let connection: WebSocketServer;
+          let inner: { close(cb: (err?: Error) => void): void } | undefined;
 
           // see the Server::listen function for overloads
           if (typeof args[0] === 'number') {
@@ -411,12 +419,12 @@ export function build<Serializable>(
           } else if (args[0] instanceof (await import('http')).Server) {
             const { Server: WebSocketServer } = await import('ws');
 
-            // TODO: closing the server when closing
+            [inner] = args as [HttpServer];
             connection = new WebSocketServer({ server: args[0] });
           } else if (args[0] instanceof (await import('https')).Server) {
             const { Server: WebSocketServer } = await import('ws');
 
-            // TODO: closing the server when closing
+            [inner] = args as [HttpsServer];
             connection = new WebSocketServer({ server: args[0] });
           } else {
             connection = args[0] as WebSocketServer;
@@ -424,6 +432,7 @@ export function build<Serializable>(
 
           return setupServer(
             connection,
+            inner,
             handlers,
             serializer,
             functionValidation,
@@ -463,13 +472,11 @@ function setupClient<
     on('message', messageHandler);
   });
 
-  // TODO: connection errors
-  // TODO: connection closing events
-
   type WaitingForResponse = (res: Promise<Functions[string]['response']['data']>) => void;
 
   // client state
   const waitingForResponse = new Map<string, WaitingForResponse>();
+  const connectionHandling = setupConnectionEventHandling(on);
   const eventHandling = setupEventHandling(eventValidation, shouldValidate);
 
   async function messageHandler({ data: msg }: { data: Serialized }) {
@@ -487,6 +494,10 @@ function setupClient<
     const parsed = (await deserialize(msg)) as Parsed;
 
     if (typeof parsed !== 'object' || parsed === null) {
+      logger.warn(
+        `Received an unexpected message - deserialized as non-object. (${parsed as string})`,
+      );
+
       return;
     }
 
@@ -499,6 +510,8 @@ function setupClient<
 
       if (respond) {
         respond(Promise.reject(error));
+      } else {
+        logger.warn(`Received an error response for a message we did not anticipate.`);
       }
     } else if ('mt' in parsed) {
       const { mt, mid: messageID, data } = parsed as Functions[string]['response'];
@@ -517,6 +530,8 @@ function setupClient<
 
       if (respond) {
         respond(Promise.resolve(data));
+      } else {
+        logger.warn(`Received a success response for a message we did not anticipate.`);
       }
     } else if ('ev' in parsed) {
       eventHandling.dispatch(parsed);
@@ -531,6 +546,10 @@ function setupClient<
         case 'one':
         case 'off':
           return eventHandling[prop];
+
+        case 'onError':
+        case 'onClose':
+          return connectionHandling[prop];
 
         case 'sendEvent':
           return async (name: string, data: Events[string]['data']) => {
@@ -547,8 +566,8 @@ function setupClient<
 
         case 'close':
           return async () => {
-            // TODO: wait for events to propogate
-            // TODO: wait until connection is closed
+            // TODO: wait for events to propogate and responses to come in
+
             conn.close();
           };
 
@@ -604,6 +623,7 @@ function setupServer<
   Events extends EventVariants<string>
 >(
   conn: WebSocketServer,
+  inner: { close(cb: (err?: Error) => void): void } | undefined,
   handlers: FunctionHandlers<Functions>,
   { deserialize, serialize }: DataSerialization<any>,
   functionValidation: { [k: string]: ValidationFunction<any> },
@@ -614,21 +634,14 @@ function setupServer<
     conn.binaryType = 'arraybuffer';
   }
 
-  // server state
-  const eventHandling = setupEventHandling(eventValidation, shouldValidate);
-
   let on: WebSocketServerInner<'on', never>['on'];
-  let off: WebSocketServerInner<never, 'off'>['off'];
 
   if ('on' in conn) {
     on = conn.on.bind(conn);
-    off = conn.off.bind(conn);
   } else if ('addEventListener' in conn) {
     on = conn.addEventListener.bind(conn);
-    off = conn.removeEventListener.bind(conn);
   } else if ('addListener' in conn) {
     on = conn.addListener.bind(conn);
-    off = conn.removeListener.bind(conn);
   } else {
     throw new Error('WebSocketServer did not have event bindings');
   }
@@ -641,8 +654,9 @@ function setupServer<
     client.addEventListener('message', messageHandler(client));
   });
 
-  // TODO: connection errors
-  // TODO: connection closing events
+  // server state
+  const eventHandling = setupEventHandling(eventValidation, shouldValidate);
+  const connectionHandling = setupConnectionEventHandling(on);
   const incomingPongListeners = new Set<(client: WebSocketClient) => void>();
 
   function messageHandler(client: WebSocketClient) {
@@ -668,7 +682,7 @@ function setupServer<
       }
 
       if ('err' in parsed) {
-        // TODO: I think we just ignore these? We shouldn't be receiving errors from clients.
+        logger.warn(`Received an 'err' message, which clients should not send.`);
       } else if ('ev' in parsed) {
         eventHandling.dispatch(parsed);
       } else if ('mt' in parsed) {
@@ -727,6 +741,10 @@ function setupServer<
         case 'off':
           return eventHandling[prop];
 
+        case 'onError':
+        case 'onClose':
+          return connectionHandling[prop];
+
         case 'sendEvent':
           return async (name: string, data: Events[string]['data']) => {
             if (shouldValidate && eventValidation[name]) {
@@ -742,8 +760,8 @@ function setupServer<
             for (const client of activeConnections) {
               try {
                 client.send(message);
-              } catch {
-                // TODO
+              } catch (err) {
+                logger.error(`Failed to send event to a client: ${normalizeError(err).toString()}`);
               }
             }
           };
@@ -780,8 +798,16 @@ function setupServer<
         case 'close':
           return async () => {
             // TODO: wait for events to propogate
-            // TODO: wait until connection is closed
             conn.close();
+
+            if (inner) {
+              await new Promise<void>((resolve, reject) => {
+                inner.close((err) => {
+                  if (err) reject(err);
+                  else resolve();
+                });
+              });
+            }
           };
 
         case 'then':
@@ -822,6 +848,42 @@ interface EventHandler<Events extends EventVariants<string>> {
   (res: Events[string]['data']): void;
 }
 
+function setupConnectionEventHandling(on: {
+  (event: 'close', cb: () => void): void;
+  (event: 'error', cb: (error: any) => void): void;
+}) {
+  const onClose = new Set<() => void>();
+  const onError = new Set<(error: any) => void>();
+
+  // TODO: track isClosed and react in function calls
+  on('close', () => {
+    for (const callback of onClose) {
+      callback();
+    }
+  });
+
+  on('error', (error) => {
+    const normalized = normalizeError(error);
+
+    for (const callback of onError) {
+      callback(normalized);
+    }
+  });
+
+  return {
+    onClose(cb: () => void) {
+      onClose.add(cb);
+
+      return () => onClose.delete(cb);
+    },
+    onError(cb: (error: any) => void) {
+      onError.add(cb);
+
+      return () => onError.delete(cb);
+    },
+  };
+}
+
 function setupEventHandling<Events extends EventVariants<string>>(
   eventValidation: { [k: string]: ValidationFunction<any> },
   shouldValidate: boolean,
@@ -844,7 +906,9 @@ function setupEventHandling<Events extends EventVariants<string>>(
       try {
         handler(data);
       } catch (error) {
-        // TODO: error handling
+        logger.error(
+          `An event handler for ${eventType} failed: ${normalizeError(error).toString()}`,
+        );
       }
     }
   }
@@ -904,6 +968,22 @@ function createTimeout(ms: number, error: Error): [Promise<void>, () => void] {
       clearTimeout(timeoutId);
     },
   ];
+}
+
+function normalizeError(error: any) {
+  let normalized: Error;
+
+  if (error instanceof Error) {
+    normalized = error;
+  } else if (typeof error !== 'object' || error === null) {
+    normalized = new Error(`Unknown error: ${(error as object)?.toString()}`);
+  } else if ('error' in error && (error as { error: any }).error instanceof Error) {
+    normalized = (error as { error: any }).error as Error;
+  } else {
+    normalized = new Error(`Unknown error: ${(error as object)?.toString()}`);
+  }
+
+  return normalized;
 }
 
 // ts assertions to ensure compatibility
