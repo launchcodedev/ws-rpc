@@ -184,6 +184,8 @@ export type Connection<
     close(): Promise<void>;
   };
 
+export type UnixSocket = { socket: string };
+
 /** Intermediate representation of a client type, that can connect to a server */
 export type Client<
   Functions extends FunctionVariants<FunctionName>,
@@ -191,6 +193,7 @@ export type Client<
 > = {
   connect(port: number, secure?: boolean): Promise<Connection<Functions, Events>>;
   connect(host: string, port: number, secure?: boolean): Promise<Connection<Functions, Events>>;
+  connect(socket: UnixSocket): Promise<Connection<Functions, Events>>;
   connect(client: WebSocketClient): Promise<Connection<Functions, Events>>;
 };
 
@@ -198,6 +201,7 @@ export type Client<
 export type Server<Functions extends FunctionVariants, Events extends EventVariants> = {
   listen(port: number): Promise<Connection<Functions, Events>>;
   listen(host: string, port: number): Promise<Connection<Functions, Events>>;
+  listen(socket: UnixSocket): Promise<Connection<Functions, Events>>;
   listen(server: WebSocketServer): Promise<Connection<Functions, Events>>;
   listen(server: HttpServer): Promise<Connection<Functions, Events>>;
   listen(server: HttpsServer): Promise<Connection<Functions, Events>>;
@@ -363,7 +367,13 @@ export function build<Serializable>(
             return connect('127.0.0.1', port, secure);
           }
 
-          if (typeof args[0] === 'string') {
+          if (args[0] && typeof args[0] === 'object' && 'socket' in args[0]) {
+            const [{ socket }] = args as [UnixSocket];
+            const WebSocket = await getWebSocket();
+
+            logger.info(`Connecting to 'ws+unix://${socket}'`);
+            connection = new WebSocket(`ws+unix://${socket}`);
+          } else if (typeof args[0] === 'string') {
             const [host, port, secure] = args as [string, number, boolean | undefined];
             const WebSocket = await getWebSocket();
 
@@ -415,13 +425,25 @@ export function build<Serializable>(
           logger.verbose(`Setting up a Server that should not validate data`);
         }
 
-        async function listen(...args: unknown[]) {
+        async function listen(
+          ...args: unknown[]
+        ): Promise<Connection<FunctionVariants, EventVariants>> {
           let connection: WebSocketServer;
 
           // we need the inner type, so that an explicit HTTP server is closed as well
           let inner: { close(cb: (err?: Error) => void): void } | undefined;
 
           // see the Server::listen function for overloads
+          if (args[0] && typeof args[0] === 'object' && 'socket' in args[0]) {
+            const { Server } = await import('http');
+            const [{ socket }] = args as [UnixSocket];
+
+            const server = new Server();
+            server.listen(socket);
+
+            return listen(server);
+          }
+
           if (typeof args[0] === 'number') {
             const [port] = args as [number];
             const { Server: WebSocketServer } = await import('ws');

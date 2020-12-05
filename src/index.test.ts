@@ -1,4 +1,6 @@
 import getPort from 'get-port';
+import { unlinkSync } from 'fs';
+import { resolve } from 'path';
 import { jsonSerialization, build, Builder } from './index';
 import bsonSerialization from './bson';
 
@@ -267,3 +269,40 @@ describe('custom serialization formats', () => {
 });
 
 describe('reconnecting-websocket', () => {});
+
+describe('unix sockets', () => {
+  it('connects and sends messages over unix socket', async () => {
+    const common = build(jsonSerialization)
+      .func<'test', { input: number }, { output: number }>()
+      .event<'testing', { data: true }>();
+
+    const temp = resolve('./tmp');
+    const server = await common
+      .server({
+        async test({ input }) {
+          return { output: input };
+        },
+      })
+      .listen({ socket: temp });
+
+    const client = await common.client().connect({ socket: temp });
+
+    try {
+      await client.ping();
+      await server.ping();
+
+      expect.assertions(3);
+
+      client.on('testing', ({ data }) => expect(data).toBe(true));
+      server.on('testing', ({ data }) => expect(data).toBe(true));
+
+      await client.sendEvent('testing', { data: true });
+      await server.sendEvent('testing', { data: true });
+
+      expect(await client.test({ input: 88 })).toEqual({ output: 88 });
+    } finally {
+      unlinkSync(temp);
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+});
