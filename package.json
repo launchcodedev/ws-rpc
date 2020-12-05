@@ -1,6 +1,6 @@
 {
   "name": "@lcdev/ws-rpc",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Simple type-safe websocket RPC layer",
   "license": "MPL-2.0",
   "sideEffects": false,
