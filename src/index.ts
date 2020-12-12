@@ -525,6 +525,19 @@ function setupClient<
   const connectionHandling = setupConnectionEventHandling(on);
   const eventHandling = setupEventHandling(eventValidation, shouldValidate);
 
+  function assertConnectionOpen() {
+    switch (conn.readyState) {
+      case 1:
+        return;
+      case 0:
+        throw new Error('WebSocket connection is CONNECTING, cannot perform operation');
+      case 2:
+        throw new Error('WebSocket connection is CLOSING, cannot perform operation');
+      default:
+        throw new Error('WebSocket connection is CLOSED, cannot perform operation');
+    }
+  }
+
   async function messageHandler({ data: msg }: { data: Serialized }) {
     if (msg === 'ping') {
       logger.verbose('Received a ping! Responding with pong.');
@@ -600,6 +613,8 @@ function setupClient<
 
         case 'sendEvent':
           return async (name: string, data: Events[string]['data']) => {
+            assertConnectionOpen();
+
             if (shouldValidate && eventValidation[name]) {
               const error = eventValidation[name](data);
 
@@ -617,8 +632,17 @@ function setupClient<
           return async () => {
             // TODO: wait for events to propogate and responses to come in
 
-            logger.verbose(`Closing connection`);
-            conn.close();
+            switch (conn.readyState) {
+              case 0:
+              case 1: {
+                logger.verbose(`Closing connection`);
+                conn.close();
+              }
+              default: {
+                logger.warn(`Connection was already closed, closing anyway`);
+                conn.close()
+              }
+            }
           };
 
         case 'then':
@@ -630,6 +654,8 @@ function setupClient<
 
           // all function calls go through here, it's why we set up a Proxy
           return async (data: unknown, timeoutMS: number = 15000) => {
+            assertConnectionOpen();
+
             const message = { mt: prop, data, mid: nanoid() };
 
             if (prop === 'ping') {
@@ -921,7 +947,6 @@ function setupConnectionEventHandling(on: {
   const onClose = new Set<() => void>();
   const onError = new Set<(error: any) => void>();
 
-  // TODO: track isClosed and react in function calls
   on('close', () => {
     if (onClose.size === 0) {
       logger.warn('Connection was closed');
