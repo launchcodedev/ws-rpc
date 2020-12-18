@@ -132,9 +132,10 @@ describe('server and client', () => {
     const server = new Server(port);
     const client = await new Client('localhost', port).waitForConnection();
 
-    await expect(client.call('foo', undefined)).rejects.toThrow(
-      "Function 'foo' had no handlers in the server",
-    );
+    await expect(client.call('foo', undefined)).rejects.toMatchObject({
+      code: 404,
+      message: "Function 'foo' had no handlers in the server",
+    });
 
     await client.close();
     await server.close();

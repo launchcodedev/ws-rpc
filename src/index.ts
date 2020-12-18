@@ -344,6 +344,7 @@ export class Server<
               await this.serialize({
                 err: true,
                 mid,
+                code: 404,
                 message: `Function '${mt}' had no handlers in the server`,
               }),
             );
