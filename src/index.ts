@@ -181,9 +181,11 @@ export type Connection<
     ping(timeoutMS?: number): Promise<void>;
     onError(cb: (error: Error) => void): CancelEventListener;
     onClose(cb: () => void): CancelEventListener;
+    isClosed(): boolean;
     close(): Promise<void>;
   };
 
+/** Configuration for using unix domain sockets */
 export type UnixSocket = { socket: string };
 
 /** Intermediate representation of a client type, that can connect to a server */
@@ -628,6 +630,11 @@ function setupClient<
             conn.send(await serialize({ ev: name, data }));
           };
 
+        case 'isClosed':
+          return () => {
+            return conn.readyState === 2 || conn.readyState === 3;
+          };
+
         case 'close':
           return async () => {
             // TODO: wait for events to propogate and responses to come in
@@ -738,6 +745,7 @@ function setupServer<
   const eventHandling = setupEventHandling(eventValidation, shouldValidate);
   const connectionHandling = setupConnectionEventHandling(on);
   const incomingPongListeners = new Set<(client: WebSocketClient) => void>();
+  let isClosed = false;
 
   function messageHandler(client: WebSocketClient) {
     return async ({ data: msg }: { data: Serialized }) => {
@@ -885,11 +893,17 @@ function setupServer<
             await Promise.race([waitForPongs, timeout]).finally(clearTimeout);
           };
 
+        case 'isClosed':
+          return () => {
+            return isClosed;
+          };
+
         case 'close':
           return async () => {
             // TODO: wait for events to propogate and responses to be sent
 
             logger.verbose(`Closing connection`);
+            isClosed = true;
             conn.close();
 
             if (inner) {

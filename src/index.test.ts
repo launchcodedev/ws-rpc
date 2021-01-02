@@ -120,6 +120,21 @@ describe('server & client connection', () => {
       await Promise.all([client.close(), server.close()]);
     }
   });
+
+  it('sets isClosed correctly', async () => {
+    const common = build(jsonSerialization);
+    const [client, server] = await setupClientAndServer(common, {});
+
+    try {
+      expect(client.isClosed()).toBe(false);
+      expect(server.isClosed()).toBe(false);
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+
+    expect(client.isClosed()).toBe(true);
+    expect(server.isClosed()).toBe(true);
+  });
 });
 
 describe('validation', () => {
