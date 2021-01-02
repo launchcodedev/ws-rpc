@@ -1,6 +1,9 @@
 import getPort from 'get-port';
 import { unlinkSync } from 'fs';
 import { resolve } from 'path';
+import WS from 'ws';
+import ReconnectingWS from 'reconnecting-websocket';
+
 import { jsonSerialization, build, Builder } from './index';
 import bsonSerialization from './bson';
 
@@ -283,8 +286,61 @@ describe('custom serialization formats', () => {
   });
 });
 
-// TODO
-describe('reconnecting-websocket', () => {});
+describe('reconnecting-websocket', () => {
+  const fastReconnectingWS = (port: number) =>
+    new ReconnectingWS(`ws://localhost:${port}`, [], {
+      connectionTimeout: 10,
+      minReconnectionDelay: 10,
+      maxReconnectionDelay: 10,
+      WebSocket: WS,
+    });
+
+  it('reconnects after server disconnects', async () => {
+    const common = build(jsonSerialization);
+
+    const port = await getPort();
+    const server = await common.server({}, false).listen(port);
+    const client = await common.client(false).connect(fastReconnectingWS(port));
+
+    await expect(client.ping()).resolves.toBeUndefined();
+
+    // the first server was closed
+    await server.close();
+
+    // now there's a new server in its place
+    const server2 = await common.server({}, false).listen(port);
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    try {
+      await expect(client.ping()).resolves.toBeUndefined();
+    } finally {
+      await server2.close();
+      await client.close();
+    }
+  });
+
+  it('connects to server after first rejection', async () => {
+    const common = build(jsonSerialization);
+
+    const port = await getPort();
+
+    const ws = fastReconnectingWS(port);
+    const clientBuilder = common.client(false);
+
+    await expect(clientBuilder.connect(ws)).rejects.toBeTruthy();
+
+    const server = await common.server({}, false).listen(port);
+    const client = await clientBuilder.connect(ws);
+
+    try {
+      await expect(client.ping()).resolves.toBeUndefined();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
 
 describe('unix sockets', () => {
   it('connects and sends messages over unix socket', async () => {

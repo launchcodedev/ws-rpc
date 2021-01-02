@@ -5,8 +5,10 @@ import type { Server as HttpsServer } from 'https';
 import type { Json } from '@lcdev/ts';
 import { nanoid } from 'nanoid';
 import { logger } from './logging';
+import { RpcError, ErrorType } from './errors';
 
 export { LogLevel, setLogLevel } from './logging';
+export * from './errors';
 
 export type FunctionName = string;
 export type EventName = string;
@@ -324,8 +326,9 @@ export function build<Serializable>(
         }
 
         if (functionValidation[name]) {
-          throw new Error(
+          throw new RpcError(
             `Tried to call func() with validation, but a function named ${name} already exists.`,
+            ErrorType.BuildError,
           );
         }
 
@@ -338,8 +341,9 @@ export function build<Serializable>(
         }
 
         if (eventValidation[name]) {
-          throw new Error(
+          throw new RpcError(
             `Tried to call event() with validation, but an event named ${name} already exists.`,
+            ErrorType.BuildError,
           );
         }
 
@@ -395,7 +399,7 @@ export function build<Serializable>(
 
           const [timeout, clearTimeout] = createTimeout(
             10000,
-            new Error('Connecting to WebSocket server timed out'),
+            new RpcError('Connecting to WebSocket server timed out', ErrorType.Timeout),
           );
 
           const connecting = new Promise<void>((resolve, reject) => {
@@ -532,11 +536,20 @@ function setupClient<
       case 1:
         return;
       case 0:
-        throw new Error('WebSocket connection is CONNECTING, cannot perform operation');
+        throw new RpcError(
+          'WebSocket connection is CONNECTING, cannot perform operation',
+          ErrorType.ConnectionNotOpen,
+        );
       case 2:
-        throw new Error('WebSocket connection is CLOSING, cannot perform operation');
+        throw new RpcError(
+          'WebSocket connection is CLOSING, cannot perform operation',
+          ErrorType.ConnectionNotOpen,
+        );
       default:
-        throw new Error('WebSocket connection is CLOSED, cannot perform operation');
+        throw new RpcError(
+          'WebSocket connection is CLOSED, cannot perform operation',
+          ErrorType.ConnectionNotOpen,
+        );
     }
   }
 
@@ -565,7 +578,10 @@ function setupClient<
 
     if ('err' in parsed) {
       const { message, code, data, mid: messageID } = parsed;
-      const error = Object.assign(new Error(message), { code, data });
+      const error = Object.assign(
+        new RpcError(message, code ? (code as ErrorType) : ErrorType.Response),
+        { code, data },
+      );
       const respond = waitingForResponse.get(messageID);
 
       waitingForResponse.delete(messageID);
@@ -647,7 +663,7 @@ function setupClient<
               }
               default: {
                 logger.warn(`Connection was already closed, closing anyway`);
-                conn.close()
+                conn.close();
               }
             }
           };
@@ -689,7 +705,10 @@ function setupClient<
 
             const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
-              new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
+              new RpcError(
+                `Call to '${prop}' failed because it timed out in ${timeoutMS}ms`,
+                ErrorType.Timeout,
+              ),
             );
 
             return Promise.race([
@@ -728,7 +747,7 @@ function setupServer<
   } else if ('addListener' in conn) {
     on = conn.addListener.bind(conn);
   } else {
-    throw new Error('WebSocketServer did not have event bindings');
+    throw new RpcError('WebSocketServer did not have event bindings', ErrorType.InvalidWebsocket);
   }
 
   const activeConnections = new Set<WebSocketClient>();
@@ -887,7 +906,10 @@ function setupServer<
 
             const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
-              new Error(`Pinging all clients exceeded timeout ${timeoutMS}ms`),
+              new RpcError(
+                `Pinging all clients exceeded timeout ${timeoutMS}ms`,
+                ErrorType.Timeout,
+              ),
             );
 
             await Promise.race([waitForPongs, timeout]).finally(clearTimeout);
@@ -938,7 +960,10 @@ function setupServer<
 
             const [timeout, clearTimeout] = createTimeout(
               timeoutMS,
-              new Error(`Call to '${prop}' failed because it timed out in ${timeoutMS}ms`),
+              new RpcError(
+                `Call to '${prop}' failed because it timed out in ${timeoutMS}ms`,
+                ErrorType.Timeout,
+              ),
             );
 
             return Promise.race([response, timeout]).finally(clearTimeout);
@@ -1089,11 +1114,11 @@ function normalizeError(error: any) {
   if (error instanceof Error) {
     normalized = error;
   } else if (typeof error !== 'object' || error === null) {
-    normalized = new Error(`Unknown error: ${(error as object)?.toString()}`);
+    normalized = new RpcError(`Unknown error: ${(error as object)?.toString()}`, ErrorType.Unknown);
   } else if ('error' in error && (error as { error: any }).error instanceof Error) {
     normalized = (error as { error: any }).error as Error;
   } else {
-    normalized = new Error(`Unknown error: ${(error as object)?.toString()}`);
+    normalized = new RpcError(`Unknown error: ${(error as object)?.toString()}`, ErrorType.Unknown);
   }
 
   return normalized;
