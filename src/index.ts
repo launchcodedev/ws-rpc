@@ -1121,5 +1121,5 @@ function getWebSocket() {
 
 const _test1: WebSocketClient = (null as any) as WS;
 const _test2: WebSocketClient = (null as any) as WebSocket;
-const _test3: WebSocketServer = (null as any) as WS.Server;
-const _test4: WebSocketServer = (null as any) as ReconnectingWS;
+const _test3: WebSocketClient = (null as any) as ReconnectingWS;
+const _test4: WebSocketServer = (null as any) as WS.Server;

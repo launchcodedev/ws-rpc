@@ -1,21 +1,27 @@
 ## Simple Websocket RPC
+
 This package provides the minimal set of boilerplate that's normally needed when setting up a client-server websocket.
 
-It's a really lightweight alternative to socket.io and similar systems. The big benefit is that it's fully type-safe,
-and you can read all of the source code in 10 minutes. Don't build giant systems on this - it's meant for small
-communication layers between software, usually in single-tenant systems.
+It's a really lightweight alternative to socket.io and similar systems. The
+benefit is that it's fully type-safe, and you can read all of the source code
+in about 10 minutes.
+
+You probably shouldn't build giant systems on this (at least, talk to us first).
+It's meant for small communication layers between software, usually in single-tenant systems.
+
+[App Config](https://app-config.dev) uses this library internally, for it's "secret agent".
 
 ```
 yarn add @lcdev/ws-rpc
 ```
 
 ## Quickstart
+
 Normally, you'd have some shared code between server and client (backend and frontend). It would look like this:
 
 ```typescript
 import { build } from '@lcdev/ws-rpc';
 
-// this is the definition of the API between client(s) and server
 const common = build({ deserialize: JSON.parse, serialize: JSON.stringify })
   // functions are client -> server. input and outputs can be anything serializable.
   .func<'double', { num: number }, { doubled: number }>()
@@ -24,8 +30,13 @@ const common = build({ deserialize: JSON.parse, serialize: JSON.stringify })
   .event<'single'>()
   .event<'random', { rand: number }>()
   .event<'scheduled', { rand: number }>();
+```
 
-// normally in a different module, we can define our server
+In a Node.js server, we can use the common code:
+
+```typescript
+import { common } from 'my-common-rpc';
+
 common
   .server({
     async double({ num }) {
@@ -58,8 +69,13 @@ common
     }, 500);
   })
   .catch(console.error);
+```
 
-// normally in another module, we connect as a client
+Then on the client side:
+
+```typescript
+import { common } from 'my-common-rpc';
+
 common
   .client()
   .connect(3000)
@@ -83,3 +99,13 @@ common
   })
   .catch(console.error);
 ```
+
+## Features
+
+- Custom data serialization support, use BSON via `@lcdev/ws-rpc/bson` export
+- Custom client websocket library support by passing the client in `connect`
+- Custom server support by passing the server in `listen` (including node `http` and `https` servers)
+- Unix socket support, just pass `{ socket: 'filepath' }` in client & server
+- Optional validation of function data using custom validation functions in `func` and `event` builders
+- Lazy loading of modules, no special browser or server setup needed
+- Exports `setLogLevel` function to help see what's happening internally
