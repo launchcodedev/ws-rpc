@@ -887,7 +887,7 @@ function setupServer<
 
         case 'close':
           return async () => {
-            // TODO: wait for events to propogate
+            // TODO: wait for events to propogate and responses to be sent
 
             logger.verbose(`Closing connection`);
             conn.close();
