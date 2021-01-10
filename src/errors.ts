@@ -3,8 +3,8 @@ export enum ErrorType {
   Timeout = 2,
   ConnectionNotOpen = 3,
   Response = 4,
-    InvalidWebsocket = 5,
-    Unknown = -1,
+  InvalidWebsocket = 5,
+  Unknown = -1,
 }
 
 export class RpcError extends Error {

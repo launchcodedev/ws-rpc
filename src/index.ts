@@ -660,10 +660,12 @@ function setupClient<
               case 1: {
                 logger.verbose(`Closing connection`);
                 conn.close();
+                break;
               }
               default: {
                 logger.warn(`Connection was already closed, closing anyway`);
                 conn.close();
+                break;
               }
             }
           };
