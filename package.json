@@ -1,6 +1,6 @@
 {
   "name": "@lcdev/ws-rpc",
-  "version": "0.3.8",
+  "version": "0.4.0-rc.1",
   "description": "Simple type-safe websocket RPC layer",
   "license": "MPL-2.0",
   "sideEffects": false,
@@ -27,6 +27,14 @@
     "fix": "eslint --ext .ts,.tsx src --fix",
     "test": "jest",
     "prepublishOnly": "yarn clean && yarn build && yarn build:es"
+  },
+  "dependencies": {
+    "@types/bson": "4",
+    "@types/ws": "7",
+    "bson": "4",
+    "nanoid": "3",
+    "reconnecting-websocket": "4",
+    "ws": "7"
   },
   "devDependencies": {
     "@commitlint/cli": "8",
@@ -62,13 +70,5 @@
     "extends": [
       "@lcdev/commitlint"
     ]
-  },
-  "dependencies": {
-    "@types/bson": "4",
-    "@types/ws": "7",
-    "bson": "4",
-    "nanoid": "3",
-    "reconnecting-websocket": "4",
-    "ws": "7"
   }
 }
