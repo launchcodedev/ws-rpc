@@ -29,6 +29,7 @@
     "prepublishOnly": "yarn clean && yarn build && yarn build:es"
   },
   "dependencies": {
+    "@lcdev/ts": "0.2",
     "@types/bson": "4",
     "@types/ws": "7",
     "bson": "4",
@@ -42,7 +43,6 @@
     "@lcdev/eslint-config": "0.3",
     "@lcdev/jest": "0.3",
     "@lcdev/prettier": "0.1",
-    "@lcdev/ts": "0.2",
     "@lcdev/tsconfig": "0.2",
     "@types/bson": "4",
     "@types/jest": "26",
